@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { MODELS } from '../config/models'
 import { CLASSIFY_PROMPT } from '../prompts/classify'
+import { ANALYSE_IMAGE_PROMPT } from '../prompts/analyseImage'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -40,5 +41,45 @@ export async function classifyNarration(narration: string): Promise<ClassifyResu
   } catch (err) {
     console.error('[ANTHROPIC] JSON parse failed. Raw response was:', raw)
     throw new Error(`Failed to parse classification response: ${err instanceof Error ? err.message : err}`)
+  }
+}
+
+export interface ImageAnalysisResult {
+  description: string
+  notable_issues: string[]
+  suggested_caption: string
+}
+
+export async function analyseImage(base64Image: string, mediaType: 'image/jpeg' | 'image/png'): Promise<ImageAnalysisResult> {
+  console.log(`[ANTHROPIC] Calling ${MODELS.IMAGE_ANALYSIS} for image analysis`)
+
+  const message = await client.messages.create({
+    model: MODELS.IMAGE_ANALYSIS,
+    max_tokens: 1024,
+    messages: [{
+      role: 'user',
+      content: [
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: mediaType, data: base64Image },
+        },
+        {
+          type: 'text',
+          text: ANALYSE_IMAGE_PROMPT,
+        },
+      ],
+    }],
+  })
+
+  const raw  = message.content[0].type === 'text' ? message.content[0].text : ''
+  const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+
+  console.log(`[ANTHROPIC] Image analysis response: ${text.slice(0, 300)}`)
+
+  try {
+    return JSON.parse(text) as ImageAnalysisResult
+  } catch (err) {
+    console.error('[ANTHROPIC] Image analysis JSON parse failed. Raw response was:', raw)
+    throw new Error(`Failed to parse image analysis response: ${err instanceof Error ? err.message : err}`)
   }
 }

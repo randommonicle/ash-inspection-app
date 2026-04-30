@@ -7,6 +7,7 @@ import { KeepAwake } from '@capacitor-community/keep-awake'
 
 import { useAuth } from '../contexts/AuthContext'
 import { useNetwork } from '../hooks/useNetwork'
+import { useSync } from '../hooks/useSync'
 import { RecordButton } from '../components/RecordButton'
 import { ObservationFeedItem } from '../components/ObservationFeedItem'
 import { SectionPicker } from '../components/SectionPicker'
@@ -18,7 +19,6 @@ import {
   updateObservationSection,
   createPhoto, getPhotosForInspection,
 } from '../db/database'
-import { syncPendingInspections } from '../services/sync'
 import {
   SECTION_LABELS, SECTION_TEMPLATE_ORDER,
   type LocalInspection, type LocalObservation, type LocalPhoto, type Property, type SectionKey,
@@ -36,6 +36,7 @@ export function ActiveInspectionScreen() {
   const location = useLocation()
   const { profile } = useAuth()
   const online = useNetwork()
+  const { status: syncStatus, triggerSync } = useSync()
 
   const property = location.state?.property as Property | undefined
 
@@ -217,7 +218,7 @@ export function ActiveInspectionScreen() {
     try {
       await completeInspection(inspectionId)
       navigate('/properties')
-      syncPendingInspections().catch(() => {})
+      triggerSync().catch(() => {})
     } catch {
       setError('Failed to complete inspection')
       setCompleting(false)
@@ -247,8 +248,19 @@ export function ActiveInspectionScreen() {
           <div className="text-right shrink-0">
             <p className="text-white font-mono text-lg font-bold">{formatTime(elapsed)}</p>
             <div className="flex items-center justify-end gap-1 mt-0.5">
-              <div className={`w-2 h-2 rounded-full ${online ? 'bg-green-400' : 'bg-amber-400'}`} />
-              <span className="text-ash-light text-xs">{online ? 'Online' : 'Offline'}</span>
+              <div className={`w-2 h-2 rounded-full ${
+                !online              ? 'bg-amber-400' :
+                syncStatus === 'syncing' ? 'bg-blue-400 animate-pulse' :
+                syncStatus === 'error'   ? 'bg-red-400' :
+                'bg-green-400'
+              }`} />
+              <span className="text-ash-light text-xs">
+                {!online              ? 'Offline'  :
+                 syncStatus === 'syncing' ? 'Syncing…' :
+                 syncStatus === 'queued'  ? 'Queued'   :
+                 syncStatus === 'error'   ? 'Sync error' :
+                 'Online'}
+              </span>
             </div>
           </div>
         </div>

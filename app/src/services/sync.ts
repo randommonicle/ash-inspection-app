@@ -8,6 +8,26 @@ import {
 } from '../db/database'
 import type { LocalInspection } from '../types'
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL as string
+
+async function triggerOpusAnalysis(photoId: string, storagePath: string): Promise<void> {
+  if (!API_BASE) {
+    console.warn('[SYNC] VITE_API_BASE_URL not set — skipping Opus analysis')
+    return
+  }
+  console.log(`[SYNC] Triggering Opus analysis for photo ${photoId}`)
+  const res = await fetch(`${API_BASE}/api/analyse-photo`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ photo_id: photoId, storage_path: storagePath }),
+  })
+  if (!res.ok) {
+    console.error(`[SYNC] Opus analysis failed for ${photoId}: HTTP ${res.status}`)
+  } else {
+    console.log(`[SYNC] Opus analysis complete for ${photoId}`)
+  }
+}
+
 function base64ToBlob(base64: string, mimeType: string): Blob {
   const binary = atob(base64)
   const bytes  = new Uint8Array(binary.length)
@@ -101,6 +121,9 @@ async function syncInspection(inspection: LocalInspection): Promise<void> {
         console.error(`[SYNC] Photo record upsert failed for ${photo.id}:`, photoErr.message)
         throw new Error(`Photo record upsert: ${photoErr.message}`)
       }
+
+      // Trigger Opus image analysis server-side after successful upload
+      await triggerOpusAnalysis(photo.id, storagePath)
 
       console.log(`[SYNC] Photo ${photo.id} synced successfully`)
     } catch (err) {
