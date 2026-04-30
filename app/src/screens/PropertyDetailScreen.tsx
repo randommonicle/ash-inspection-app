@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { getInspectionsForProperty, createInspection, deleteInspection } from '../db/database'
+import { generateReport } from '../services/report'
 import type { Property, LocalInspection } from '../types'
 
 export function PropertyDetailScreen() {
@@ -10,10 +11,12 @@ export function PropertyDetailScreen() {
   const navigate = useNavigate()
   const { profile } = useAuth()
 
-  const [property, setProperty]       = useState<Property | null>(null)
-  const [inspections, setInspections] = useState<LocalInspection[]>([])
-  const [starting, setStarting]       = useState(false)
-  const [error, setError]             = useState('')
+  const [property, setProperty]             = useState<Property | null>(null)
+  const [inspections, setInspections]       = useState<LocalInspection[]>([])
+  const [starting, setStarting]             = useState(false)
+  const [generatingId, setGeneratingId]     = useState<string | null>(null)
+  const [reportResult, setReportResult]     = useState<Record<string, 'sent' | 'error'>>({})
+  const [error, setError]                   = useState('')
 
   useEffect(() => {
     if (!id) return
@@ -21,6 +24,20 @@ export function PropertyDetailScreen() {
       .then(({ data }) => setProperty(data))
     getInspectionsForProperty(id).then(setInspections).catch(() => {})
   }, [id])
+
+  const handleGenerateReport = useCallback(async (inspectionId: string) => {
+    setGeneratingId(inspectionId)
+    setReportResult(prev => { const n = { ...prev }; delete n[inspectionId]; return n })
+    try {
+      await generateReport(inspectionId)
+      setReportResult(prev => ({ ...prev, [inspectionId]: 'sent' }))
+    } catch (err: unknown) {
+      console.error('[PROPERTY DETAIL] Report generation failed:', err instanceof Error ? err.message : err)
+      setReportResult(prev => ({ ...prev, [inspectionId]: 'error' }))
+    } finally {
+      setGeneratingId(null)
+    }
+  }, [])
 
   const handleDeleteInspection = async (id: string) => {
     if (!window.confirm('Delete this inspection and all its observations?')) return
@@ -144,6 +161,40 @@ export function PropertyDetailScreen() {
                     </div>
                     {isActive && (
                       <p className="text-xs text-ash-mid mt-1">Tap to resume →</p>
+                    )}
+                    {/* Generate report — only shown for synced completed inspections */}
+                    {ins.status === 'completed' && ins.synced && (
+                      <div className="mt-3 pt-3 border-t border-gray-100">
+                        {reportResult[ins.id] === 'error' ? (
+                          <div className="space-y-1.5">
+                            <p className="text-xs text-red-500 text-center">Report failed — please try again</p>
+                            <button
+                              onClick={e => { e.stopPropagation(); handleGenerateReport(ins.id) }}
+                              disabled={generatingId === ins.id}
+                              className="w-full py-2 rounded-lg bg-ash-navy text-white text-xs font-bold active:scale-[0.98] transition disabled:opacity-50"
+                            >
+                              Retry
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5">
+                            {reportResult[ins.id] === 'sent' && (
+                              <p className="text-xs text-green-600 text-center font-medium">Report sent to your email</p>
+                            )}
+                            <button
+                              onClick={e => { e.stopPropagation(); handleGenerateReport(ins.id) }}
+                              disabled={generatingId === ins.id}
+                              className="w-full py-2 rounded-lg bg-ash-navy text-white text-xs font-bold active:scale-[0.98] transition disabled:opacity-50"
+                            >
+                              {generatingId === ins.id
+                                ? 'Generating report…'
+                                : reportResult[ins.id] === 'sent'
+                                  ? 'Regenerate Report'
+                                  : 'Generate Report'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 )

@@ -3,6 +3,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cors from 'cors'
 import classifyRouter from './routes/classify'
 import analysePhotoRouter from './routes/analysePhoto'
+import generateReportRouter from './routes/generateReport'
 
 const app  = express()
 const port = process.env.PORT ?? 3001
@@ -24,6 +25,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 app.get('/health', (_req, res) => res.json({ ok: true }))
 app.use('/api/classify', classifyRouter)
 app.use('/api/analyse-photo', analysePhotoRouter)
+app.use('/api/generate-report', generateReportRouter)
 
 // Catch-all error handler — prevents unhandled errors returning raw stack traces to the client
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
