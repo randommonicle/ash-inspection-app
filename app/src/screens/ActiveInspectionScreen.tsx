@@ -125,7 +125,7 @@ export function ActiveInspectionScreen() {
         return
       }
 
-      if (result.split_required && result.split_at !== null) {
+      if (result.split_required && typeof result.split_at === 'number' && result.split_at > 0 && result.split_at < transcript.length) {
         // Two sections in one narration — split and save both
         const first  = transcript.slice(0, result.split_at).trim()
         const second = transcript.slice(result.split_at).trim()
