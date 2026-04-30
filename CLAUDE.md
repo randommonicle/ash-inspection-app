@@ -77,9 +77,54 @@ Then walk through the relevant checklist below before doing anything else.
 | 1 | ✅ Done | Supabase, auth, property list |
 | 2 | ✅ Done | Recording, transcription, SQLite, camera |
 | 3 | ✅ Done | AI classification, section picker, low-confidence banner |
-| 4 | ⬜ Next | Full sync queue, photo upload, Opus image analysis |
-| 5 | ⬜ | Report generation, Word/PDF, email |
+| 4 | ✅ Done | Full sync queue, photo upload, Opus image analysis, sync status indicator |
+| 5 | ⬜ Next | Report generation, Word/PDF, email via Resend |
 | 6 | ⬜ | Section review, inspection summary, report preview, polish |
+
+---
+
+## Phase 4 — what was built and how it works
+
+**Sync flow** (`app/src/services/sync.ts`):
+1. On inspection complete, `triggerSync()` is called
+2. `syncPendingInspections()` fetches all local inspections with `status = 'completed'` and `synced_at IS NULL`
+3. For each inspection: upsert inspection record → upsert observations → upload photos to Supabase Storage
+4. After each photo upload, calls `POST /api/analyse-photo` on the backend server
+5. Server downloads the photo from Storage, runs it through claude-opus-4-6, saves the description JSON back to the `photos` table
+6. Inspection marked as synced in local SQLite DB
+
+**Sync status indicator** (`app/src/hooks/useSync.ts`):
+- `useSync()` hook exposes `{ status, triggerSync }`
+- Status: `idle | syncing | queued | error`
+- Auto-syncs when network comes back online via `Network.addListener`
+- Colour-coded dot in ActiveInspection top bar (green/blue-pulsing/amber/red)
+
+**Supabase Storage RLS** — the `inspection-files` bucket requires two policies:
+- `INSERT` for authenticated users (allows app to upload)
+- `SELECT` for authenticated users (allows server to download for Opus analysis)
+- If uploads fail with "violates row-level security policy", check these policies exist in Supabase → Storage → inspection-files → Policies
+
+**Known security issues to fix before production** (not blocking for development):
+- Deepgram API key is in `app/.env.local` (exposed in frontend bundle) — move transcription to backend server
+- `android:usesCleartextTraffic="true"` and `allowMixedContent: true` in Capacitor config — remove when using HTTPS in production
+- CORS on the server is wide open (`*`) — restrict to known origins before production
+
+---
+
+## Phase 5 — what needs building next
+
+Report generation from a completed, synced inspection:
+
+1. **Observation processing** — for each observation, call Sonnet to turn `raw_narration` into professional `processed_text` and optional `action_text` / `risk_level`
+2. **Report summary** — call Sonnet with all processed observations to produce an overall summary and highlight recurring issues
+3. **Word document** — build a `.docx` using the ASH report template (section by section, with photos, captions from Opus descriptions)
+4. **Email delivery** — send the report via Resend to the property manager/client
+5. **Trigger** — a "Generate Report" button on the inspection summary screen, or automatic after sync completes
+
+Key decisions still to make:
+- Does report generation happen on the server (triggered by a POST endpoint) or in a background job?
+- Where does the Word template live — hardcoded in server, or stored in Supabase Storage?
+- What email address does it send to — property record, or entered per inspection?
 
 ---
 
@@ -89,18 +134,19 @@ Then walk through the relevant checklist below before doing anything else.
 ash-inspection-app/
 ├── app/              # React + Capacitor frontend
 │   ├── src/
-│   │   ├── components/
-│   │   ├── screens/
-│   │   ├── services/   # API clients, Supabase, Deepgram, classify
-│   │   ├── db/         # SQLite local database
-│   │   ├── hooks/
-│   │   ├── contexts/
+│   │   ├── components/     # RecordButton, ObservationFeedItem, SectionPicker
+│   │   ├── screens/        # ActiveInspectionScreen, PropertiesScreen, etc.
+│   │   ├── services/       # sync.ts, classify.ts, transcription.ts, supabase.ts
+│   │   ├── db/             # SQLite local database (database.ts)
+│   │   ├── hooks/          # useSync.ts, useNetwork.ts
+│   │   ├── contexts/       # AuthContext
 │   │   └── config/models.ts  # Model routing — only place model names appear
 │   └── android/      # Capacitor Android project
 ├── server/           # Node.js Express backend
-│   ├── routes/
-│   ├── services/     # Anthropic API calls
-│   ├── prompts/      # All AI prompts as exported strings
+│   ├── routes/       # classify.ts, analysePhoto.ts
+│   ├── services/     # anthropic.ts, supabase.ts
+│   ├── prompts/      # classify.ts, analyseImage.ts — all AI prompts here
 │   └── config/models.ts
 └── supabase/         # DB migrations and seed data
+    └── migrations/   # Run in order — check numbering before adding new ones
 ```
