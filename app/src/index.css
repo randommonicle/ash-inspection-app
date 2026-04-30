@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Prevent iOS bounce scroll on the root */
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}

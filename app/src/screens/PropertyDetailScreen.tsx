@@ -1,0 +1,179 @@
+import { useState, useEffect } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { supabase } from '../services/supabase'
+import { useAuth } from '../contexts/AuthContext'
+import { getInspectionsForProperty, createInspection, deleteInspection } from '../db/database'
+import type { Property, LocalInspection } from '../types'
+
+export function PropertyDetailScreen() {
+  const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const { profile } = useAuth()
+
+  const [property, setProperty]       = useState<Property | null>(null)
+  const [inspections, setInspections] = useState<LocalInspection[]>([])
+  const [starting, setStarting]       = useState(false)
+  const [error, setError]             = useState('')
+
+  useEffect(() => {
+    if (!id) return
+    supabase.from('properties').select('*').eq('id', id).single()
+      .then(({ data }) => setProperty(data))
+    getInspectionsForProperty(id).then(setInspections).catch(() => {})
+  }, [id])
+
+  const handleDeleteInspection = async (id: string) => {
+    if (!window.confirm('Delete this inspection and all its observations?')) return
+    await deleteInspection(id)
+    setInspections(prev => prev.filter(i => i.id !== id))
+  }
+
+  const handleStartInspection = async () => {
+    if (!property || !profile) return
+    setStarting(true)
+    setError('')
+    try {
+      const inspection = await createInspection({
+        property_id:      property.id,
+        property_ref:     property.ref,
+        property_name:    property.name,
+        property_address: property.address,
+        inspector_id:     profile.id,
+      })
+      navigate(`/inspection/${inspection.id}`, { state: { property } })
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to start inspection')
+      setStarting(false)
+    }
+  }
+
+  if (!property) {
+    return (
+      <div className="flex items-center justify-center h-full min-h-screen bg-gray-50">
+        <div className="w-8 h-8 border-4 border-ash-mid border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  const flags = [
+    property.has_car_park    && 'Car Park',
+    property.has_lift        && 'Lift',
+    property.has_roof_access && 'Roof Access',
+  ].filter(Boolean) as string[]
+
+  return (
+    <div className="flex flex-col h-full min-h-screen bg-gray-50">
+
+      {/* Header */}
+      <div className="bg-ash-navy px-4 pt-12 pb-5">
+        <button
+          onClick={() => navigate('/properties')}
+          className="text-ash-light text-sm mb-3 flex items-center gap-1 active:opacity-60"
+        >
+          <span>←</span> Properties
+        </button>
+        <span className="text-xs font-mono font-bold text-ash-light bg-ash-mid px-2 py-0.5 rounded">
+          {property.ref}
+        </span>
+        <h1 className="text-white text-2xl font-bold mt-1 leading-tight">{property.name}</h1>
+        <p className="text-ash-light text-sm mt-1">{property.address}</p>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+        {/* Property details */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 space-y-2">
+          <Row label="Management company" value={property.management_company} />
+          <Row label="Units" value={String(property.number_of_units)} />
+          <Row label="Type" value={property.block_type} />
+          {flags.length > 0 && (
+            <div className="flex gap-2 pt-1 flex-wrap">
+              {flags.map(f => (
+                <span key={f} className="text-xs bg-ash-light text-ash-navy px-2 py-0.5 rounded-full">{f}</span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Past inspections */}
+        <div>
+          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-1 mb-2">
+            Inspection History
+          </h2>
+          {inspections.length === 0 ? (
+            <p className="text-sm text-gray-400 px-1">No inspections recorded yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {inspections.map(ins => {
+                const isActive = ins.status !== 'completed'
+                const startDate = new Date(ins.start_time)
+                return (
+                  <div
+                    key={ins.id}
+                    onClick={() => isActive ? navigate(`/inspection/${ins.id}`, { state: { property } }) : undefined}
+                    className={`bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-3 ${isActive ? 'active:scale-[0.98] transition cursor-pointer' : ''}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-ash-navy">
+                          {startDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </span>
+                        <span className="text-xs text-gray-400 ml-2">
+                          {startDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${
+                        ins.status === 'completed'
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {ins.status === 'completed' ? 'Complete' : 'In progress'}
+                      </span>
+                      {ins.status === 'completed' && (
+                        <span className={`text-xs shrink-0 ${ins.synced ? 'text-green-500' : 'text-gray-300'}`}>
+                          {ins.synced ? '✓' : '↑'}
+                        </span>
+                      )}
+                      <button
+                        onClick={e => { e.stopPropagation(); handleDeleteInspection(ins.id) }}
+                        className="text-gray-300 hover:text-red-400 active:text-red-600 text-lg leading-none px-1 shrink-0"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    {isActive && (
+                      <p className="text-xs text-ash-mid mt-1">Tap to resume →</p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {error && <p className="text-red-500 text-sm text-center">{error}</p>}
+      </div>
+
+      {/* Start inspection CTA */}
+      <div className="p-4 pb-8 bg-white border-t border-gray-100 shadow-md">
+        <button
+          onClick={handleStartInspection}
+          disabled={starting}
+          className="w-full py-4 rounded-xl bg-ash-navy text-white font-bold text-base active:scale-[0.98] transition disabled:opacity-60"
+        >
+          {starting ? 'Starting…' : '▶  Start Inspection'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <span className="text-xs text-gray-400 shrink-0">{label}</span>
+      <span className="text-sm text-gray-700 text-right">{value}</span>
+    </div>
+  )
+}

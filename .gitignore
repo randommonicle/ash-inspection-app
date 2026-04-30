@@ -1,0 +1,24 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+
+# Build output
+app/dist/
+server/dist/
+
+# Capacitor generated (can be regenerated with `npx cap sync`)
+app/android/
+app/ios/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.suo
+*.user
