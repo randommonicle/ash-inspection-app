@@ -15,7 +15,7 @@ export function SectionPicker({ current, onSelect, onClose }: Props) {
       >
         <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
           <span className="font-semibold text-ash-navy text-sm">Assign to section</span>
-          <button onClick={onClose} className="text-gray-400 text-lg leading-none">✕</button>
+          <button onClick={onClose} className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-500 text-base active:bg-gray-200">✕</button>
         </div>
         <ul className="divide-y divide-gray-50">
           {SECTION_ORDER.map(key => (

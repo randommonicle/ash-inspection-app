@@ -22,7 +22,7 @@ export function ObservationFeedItem({ observation, photos, onOverride }: Props) 
         {onOverride && (
           <button
             onClick={onOverride}
-            className="text-[10px] text-ash-mid underline active:opacity-60"
+            className="text-xs text-ash-mid font-medium px-2 py-0.5 rounded-md bg-ash-light active:opacity-60"
           >
             change
           </button>

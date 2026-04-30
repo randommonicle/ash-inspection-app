@@ -154,7 +154,7 @@ export function PropertyDetailScreen() {
                       )}
                       <button
                         onClick={e => { e.stopPropagation(); handleDeleteInspection(ins.id) }}
-                        className="text-gray-300 hover:text-red-400 active:text-red-600 text-lg leading-none px-1 shrink-0"
+                        className="w-8 h-8 flex items-center justify-center rounded-full text-gray-300 active:bg-red-50 active:text-red-500 text-xl shrink-0"
                       >
                         ×
                       </button>
