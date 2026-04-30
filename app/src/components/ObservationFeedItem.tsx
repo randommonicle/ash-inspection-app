@@ -4,9 +4,10 @@ import { SECTION_LABELS } from '../types'
 interface Props {
   observation: LocalObservation
   photos: LocalPhoto[]
+  onOverride?: () => void
 }
 
-export function ObservationFeedItem({ observation, photos }: Props) {
+export function ObservationFeedItem({ observation, photos, onOverride }: Props) {
   const obsPhotos = photos.filter(p => p.observation_id === observation.id)
 
   return (
@@ -17,6 +18,14 @@ export function ObservationFeedItem({ observation, photos }: Props) {
         </span>
         {observation.classification_conf === 'manual' && (
           <span className="text-[10px] text-gray-400">edited</span>
+        )}
+        {onOverride && (
+          <button
+            onClick={onOverride}
+            className="text-[10px] text-ash-mid underline active:opacity-60"
+          >
+            change
+          </button>
         )}
         <span className="ml-auto text-[10px] text-gray-400">
           {new Date(observation.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}

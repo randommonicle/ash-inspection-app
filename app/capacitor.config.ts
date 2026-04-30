@@ -6,6 +6,10 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   server: {
     androidScheme: 'https',
+    allowNavigation: ['192.168.1.108'],
+  },
+  android: {
+    allowMixedContent: true,
   },
   plugins: {
     Preferences: {

@@ -10,7 +10,7 @@ import type { LocalInspection } from '../types'
 
 function base64ToBlob(base64: string, mimeType: string): Blob {
   const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
+  const bytes  = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i)
   }
@@ -18,6 +18,8 @@ function base64ToBlob(base64: string, mimeType: string): Blob {
 }
 
 async function syncInspection(inspection: LocalInspection): Promise<void> {
+  console.log(`[SYNC] Starting sync for inspection ${inspection.id} (${inspection.property_name})`)
+
   // 1. Upsert inspection record
   const { error: inspErr } = await supabase.from('inspections').upsert({
     id:           inspection.id,
@@ -28,10 +30,17 @@ async function syncInspection(inspection: LocalInspection): Promise<void> {
     end_time:     inspection.end_time ?? null,
     created_at:   inspection.created_at,
   }, { onConflict: 'id' })
-  if (inspErr) throw new Error(`Inspection upsert: ${inspErr.message}`)
+
+  if (inspErr) {
+    console.error(`[SYNC] Inspection upsert failed for ${inspection.id}:`, inspErr.message)
+    throw new Error(`Inspection upsert: ${inspErr.message}`)
+  }
+  console.log(`[SYNC] Inspection record upserted`)
 
   // 2. Upsert observations
   const observations = await getObservationsForInspection(inspection.id)
+  console.log(`[SYNC] Syncing ${observations.length} observations`)
+
   if (observations.length > 0) {
     const { error: obsErr } = await supabase.from('observations').upsert(
       observations.map(o => ({
@@ -49,23 +58,34 @@ async function syncInspection(inspection: LocalInspection): Promise<void> {
       })),
       { onConflict: 'id' }
     )
-    if (obsErr) throw new Error(`Observations upsert: ${obsErr.message}`)
+    if (obsErr) {
+      console.error(`[SYNC] Observations upsert failed:`, obsErr.message)
+      throw new Error(`Observations upsert: ${obsErr.message}`)
+    }
+    console.log(`[SYNC] ${observations.length} observations synced`)
   }
 
   // 3. Upload photos and upsert photo records
   const photos = await getPhotosForInspection(inspection.id)
+  console.log(`[SYNC] Syncing ${photos.length} photos`)
+
   for (const photo of photos) {
     try {
       const storagePath = `${inspection.property_id}/${inspection.id}/${photo.id}.jpg`
+      console.log(`[SYNC] Uploading photo ${photo.id} → ${storagePath}`)
 
-      // Read file — Filesystem.readFile accepts file:// URIs on Android
+      // Filesystem.readFile accepts file:// URIs on Android directly
       const { data: base64Data } = await Filesystem.readFile({ path: photo.local_path })
       const blob = base64ToBlob(base64Data as string, 'image/jpeg')
 
       const { error: uploadErr } = await supabase.storage
         .from('inspection-files')
         .upload(storagePath, blob, { contentType: 'image/jpeg', upsert: true })
-      if (uploadErr) throw new Error(`Storage upload: ${uploadErr.message}`)
+
+      if (uploadErr) {
+        console.error(`[SYNC] Storage upload failed for photo ${photo.id}:`, uploadErr.message)
+        throw new Error(`Storage upload: ${uploadErr.message}`)
+      }
 
       const { error: photoErr } = await supabase.from('photos').upsert({
         id:             photo.id,
@@ -76,21 +96,38 @@ async function syncInspection(inspection: LocalInspection): Promise<void> {
         caption:        photo.caption ?? null,
         created_at:     photo.created_at,
       }, { onConflict: 'id' })
-      if (photoErr) throw new Error(`Photo record upsert: ${photoErr.message}`)
+
+      if (photoErr) {
+        console.error(`[SYNC] Photo record upsert failed for ${photo.id}:`, photoErr.message)
+        throw new Error(`Photo record upsert: ${photoErr.message}`)
+      }
+
+      console.log(`[SYNC] Photo ${photo.id} synced successfully`)
     } catch (err) {
       // Log per-photo failure but continue syncing remaining photos
-      console.error(`Photo ${photo.id} sync failed:`, err)
+      console.error(`[SYNC] Photo ${photo.id} sync failed — skipping:`, err instanceof Error ? err.message : err)
     }
   }
 
   await markInspectionSynced(inspection.id)
+  console.log(`[SYNC] Inspection ${inspection.id} marked as synced`)
 }
 
 export async function syncPendingInspections(): Promise<void> {
   const inspections = await getUnsyncedCompletedInspections()
+
+  if (inspections.length === 0) {
+    console.log('[SYNC] No pending inspections to sync')
+    return
+  }
+
+  console.log(`[SYNC] Found ${inspections.length} inspection(s) to sync`)
+
   for (const inspection of inspections) {
     await syncInspection(inspection).catch(err => {
-      console.error(`Inspection ${inspection.id} sync failed:`, err)
+      console.error(`[SYNC] Inspection ${inspection.id} sync failed:`, err instanceof Error ? err.message : err)
     })
   }
+
+  console.log('[SYNC] Sync pass complete')
 }
