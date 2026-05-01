@@ -19,25 +19,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const timeout = setTimeout(() => {
-      setLoading(false)
-    }, 3000)
+    const timeout = setTimeout(() => setLoading(false), 3000)
 
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      clearTimeout(timeout)
-      setSession(session)
-      setLoading(false)
-      if (session) fetchProfile(session.user.id).then(setProfile)
-    }).catch(() => {
-      clearTimeout(timeout)
-      setLoading(false)
-    })
-
+    // Wire up the auth state listener first so no events are missed.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session)
       if (session) fetchProfile(session.user.id).then(setProfile)
       else setProfile(null)
     })
+
+    // Clear any session persisted from a previous app run so that closing
+    // and reopening the app always requires a fresh login. scope:'local'
+    // avoids a network call — it just wipes the stored token on this device.
+    // Backgrounding the app (answering a call, switching apps) does NOT
+    // trigger this because the WebView JS runtime stays alive; this code
+    // only runs on a fresh process start after the user fully closes the app.
+    supabase.auth.signOut({ scope: 'local' })
+      .catch(() => {})
+      .finally(() => {
+        // After clearing, getSession will always return null, so the login
+        // screen is shown. The onAuthStateChange listener above handles the
+        // transition once the user signs in.
+        clearTimeout(timeout)
+        setLoading(false)
+      })
 
     return () => subscription.unsubscribe()
   }, [])

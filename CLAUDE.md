@@ -79,6 +79,7 @@ This is the setup needed when the app will be used over mobile data (not on the 
 - **Both terminal windows must stay open** — closing either stops the server or frontend
 - **Rebuild required** after any `.env.local` or frontend source file change before testing on device
 - **Server hot-reloads** on TypeScript file changes (tsx watch) — but **does not reload on .env changes** — restart manually if you edit .env
+- **tsx watch + external editors**: tsx watch sometimes fails to detect saves made by Claude Code or other external tools. If you add server-side code and the `[REPORT]` / `[RECURRING]` console logs don't appear, **manually restart the server** (Ctrl+C → `npm run dev`)
 - **API keys** live in `server/.env` and `app/.env.local` — neither is committed to git
 - **Model routing is a hard rule**: image analysis = `claude-opus-4-6`, everything else = `claude-sonnet-4-6`. Only defined in `server/config/models.ts` — never hardcode model names elsewhere
 - **iOS not supported yet** — testing is Android only. iOS requires macOS + Xcode + Apple Developer account
@@ -143,17 +144,23 @@ This is the setup needed when the app will be used over mobile data (not on the 
 
 ## Phase 5 — report generation
 
-**Trigger:** "Generate Report" button on the PropertyDetailScreen, visible only on completed + synced inspections. Shows "Regenerate Report" after first send.
+**Trigger:** "Generate Report" button on the PropertyDetailScreen, visible only on completed + synced inspections. Shows "Regenerate Report" after the first report has been sent (persisted in SQLite `report_sent` column, backfilled from Supabase on screen load).
 
 **Flow** (`server/routes/generateReport.ts`):
 1. Fetch inspection, property (with flags), inspector details from Supabase
 2. Fetch and process all observations — Sonnet converts raw narrations to professional text + action + risk level. Saves back to Supabase.
-3. Generate AI overall condition summary (Sonnet)
-4. Download all photos from Supabase Storage
-5. Build Word document matching ASH template (`server/services/reportGenerator.ts`)
-6. Upload `report.docx` to Supabase Storage at `/{property_id}/{inspection_id}/report.docx`
-7. Update inspection status to `report_generated`
-8. Send email via Resend with .docx attached
+3. **Recurring items** — finds the most recent previous inspection for the same property (status `completed` OR `report_generated`), fetches its observations that had `action_text`, then asks Sonnet which are still outstanding in the current observations. Results appear in the "Matters Arising from Previous Inspection" table in the report.
+4. Generate AI overall condition summary (Sonnet)
+5. Download all photos from Supabase Storage
+6. Build Word document matching ASH template (`server/services/reportGenerator.ts`)
+7. Upload `report.docx` to Supabase Storage at `/{property_id}/{inspection_id}/report.docx`
+8. Update inspection status to `report_generated`
+9. Send email via Resend with .docx attached
+
+**Report sent persistence:**
+- After a successful report send, `report_sent=1` is written to local SQLite
+- On PropertyDetailScreen load, any synced inspection without a local `report_sent` flag is backfilled by checking Supabase for `status = 'report_generated'`
+- This ensures the "Regenerate Report" label survives logout/app restart
 
 **Email routing:**
 - `REPORT_TO_OVERRIDE` in `server/.env` redirects all emails to a fixed address (currently `ben.graham240689@gmail.com`)
@@ -165,6 +172,30 @@ This is the setup needed when the app will be used over mobile data (not on the 
 - `has_car_park = false` → Car Park section omitted
 - `has_lift = false` → Lifts section omitted
 - `has_roof_access = false` → Roof section omitted
+
+---
+
+## Recording UX — tap-to-record
+
+Recording uses a **tap-to-start / tap-to-stop** model, not hold-to-record. This was chosen because inspectors often work in confined spaces and can't hold a button while talking.
+
+**RecordButton layout** (`app/src/components/RecordButton.tsx`):
+- Three zones: `[cancel/empty] [record] [rightSlot]` — always balanced
+- Cancel × appears to the LEFT while recording (tap to discard the take)
+- Camera button is passed in as `rightSlot` from the parent so it stays visible at all times
+- `appendMode` prop changes idle label to "Tap to continue" when adding to an existing observation
+- Max recording duration: **60 seconds**
+
+**Adding more to an observation** (`app/src/screens/ActiveInspectionScreen.tsx`):
+- Each observation in the feed has an "Add more to this observation" button
+- Tapping it sets `appendingToId` state and shows a blue border on that observation card
+- The next recording is appended (with a space separator) to that observation's `raw_narration`
+- The observation is re-synced with `synced=0` so the updated narration goes to Supabase
+
+**Authentication on cold start** (`app/src/contexts/AuthContext.tsx`):
+- `supabase.auth.signOut({ scope: 'local' })` is called every time the JS runtime initialises
+- This clears any persisted auth token so the inspector must re-login on every cold start
+- Background/foreground does not trigger a sign-out (the JS runtime stays alive)
 
 ---
 
@@ -193,9 +224,6 @@ Run `grep -r "TODO \[PRODUCTION\]"` from the repo root to list them all at once.
 
 - [ ] **Report header email address** — `server/services/reportGenerator.ts`
       Replace `ben@ashproperty.co.uk` with the firm's general enquiries address
-
-- [ ] **Recurring items comparison** — `server/services/reportGenerator.ts`
-      Implement real previous-inspection comparison instead of the placeholder row
 
 - [ ] **`allowNavigation` IP whitelist** — `app/capacitor.config.ts`
       Replace `192.168.1.108` with the production server domain

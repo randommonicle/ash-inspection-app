@@ -85,6 +85,12 @@ export interface ReportPhoto {
   imageBuffer: Buffer | null
 }
 
+export interface RecurringItem {
+  section_key: string
+  issue: string        // previous action_text
+  previousDate: string // formatted date of the previous inspection
+}
+
 export interface ReportData {
   propertyName: string
   propertyRef: string
@@ -103,6 +109,7 @@ export interface ReportData {
   observations: ReportObservation[]
   photos: ReportPhoto[]
   reportGeneratedAt: string
+  recurringItems: RecurringItem[]
 }
 
 // ── Helper: cell border ───────────────────────────────────────────────────────
@@ -484,12 +491,7 @@ function buildActionsSummary(observations: ReportObservation[], sectionLabels: R
 }
 
 // ── Recurring items section ───────────────────────────────────────────────────
-// TODO [PRODUCTION]: Implement real recurring-items comparison.
-// The route should query the previous inspection's observations for this property,
-// find action_text items that still appear in the current inspection, and pass them
-// in as a parameter (e.g. recurringItems: ReportObservation[]).
-// Currently always renders the "no recurring items" placeholder row.
-function buildRecurringItems(): (Paragraph | Table)[] {
+function buildRecurringItems(items: RecurringItem[]): (Paragraph | Table)[] {
   const headerCell = (text: string, width: number) => new TableCell({
     borders: border(C.midGrey),
     width: { size: width, type: WidthType.DXA },
@@ -498,27 +500,8 @@ function buildRecurringItems(): (Paragraph | Table)[] {
     children: [new Paragraph({ children: [t(text, { bold: true, size: 18, color: C.white })] })],
   })
 
-  return [
-    new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      spacing: { before: 360, after: 120 },
-      children: [t('Recurring Items', { bold: true, size: 28, color: C.navy })],
-    }),
-    new Paragraph({
-      spacing: { before: 60, after: 60 },
-      children: [t('The following items were also recorded in the previous inspection report and remain outstanding.', { size: 20 })],
-    }),
-    new Table({
-      width: { size: 9906, type: WidthType.DXA },
-      columnWidths: [2000, 5906, 2000],
-      rows: [
-        new TableRow({
-          children: [
-            headerCell('Area', 2000),
-            headerCell('Recurring Issue', 5906),
-            headerCell('Previously Noted', 2000),
-          ],
-        }),
+  const dataRows: TableRow[] = items.length === 0
+    ? [
         new TableRow({
           children: [
             new TableCell({
@@ -532,6 +515,57 @@ function buildRecurringItems(): (Paragraph | Table)[] {
             }),
           ],
         }),
+      ]
+    : items.map(item => new TableRow({
+        children: [
+          new TableCell({
+            borders: border(C.midGrey),
+            width: { size: 2000, type: WidthType.DXA },
+            margins: { top: 60, bottom: 60, left: 140, right: 140 },
+            children: [new Paragraph({ children: [t(SECTION_LABELS[item.section_key] ?? item.section_key, { size: 18 })] })],
+          }),
+          new TableCell({
+            borders: border(C.midGrey),
+            width: { size: 5906, type: WidthType.DXA },
+            margins: { top: 60, bottom: 60, left: 140, right: 140 },
+            children: [new Paragraph({ children: [t(item.issue, { size: 18 })] })],
+          }),
+          new TableCell({
+            borders: border(C.midGrey),
+            width: { size: 2000, type: WidthType.DXA },
+            margins: { top: 60, bottom: 60, left: 140, right: 140 },
+            children: [new Paragraph({ children: [t(item.previousDate, { size: 18 })] })],
+          }),
+        ],
+      }))
+
+  return [
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      spacing: { before: 360, after: 120 },
+      children: [t('Recurring Items', { bold: true, size: 28, color: C.navy })],
+    }),
+    new Paragraph({
+      spacing: { before: 60, after: 60 },
+      children: [t(
+        items.length > 0
+          ? 'The following items were also recorded in the previous inspection report and remain outstanding.'
+          : 'Items noted in the previous inspection report have been reviewed against current findings.',
+        { size: 20 }
+      )],
+    }),
+    new Table({
+      width: { size: 9906, type: WidthType.DXA },
+      columnWidths: [2000, 5906, 2000],
+      rows: [
+        new TableRow({
+          children: [
+            headerCell('Area', 2000),
+            headerCell('Recurring Issue', 5906),
+            headerCell('Previously Noted', 2000),
+          ],
+        }),
+        ...dataRows,
       ],
     }),
     new Paragraph({ spacing: { before: 0, after: 160 }, children: [] }),
@@ -603,17 +637,23 @@ export async function buildReportDocx(data: ReportData): Promise<Buffer> {
     obsBySection.set(obs.section_key, arr)
   }
 
-  const photosByObsId = new Map<string, ReportPhoto>()
+  // Group ALL photos per observation (Map stores an array, not a single photo,
+  // so multiple photos on the same observation are all included in the grid).
+  const photosByObsId = new Map<string, ReportPhoto[]>()
   for (const photo of data.photos) {
-    if (photo.observation_id) photosByObsId.set(photo.observation_id, photo)
+    if (photo.observation_id) {
+      const arr = photosByObsId.get(photo.observation_id) ?? []
+      arr.push(photo)
+      photosByObsId.set(photo.observation_id, arr)
+    }
   }
 
   const photosBySection = new Map<string, ReportPhoto[]>()
   for (const obs of data.observations) {
-    const photo = photosByObsId.get(obs.id)
-    if (photo) {
+    const obsPhotos = photosByObsId.get(obs.id) ?? []
+    if (obsPhotos.length > 0) {
       const arr = photosBySection.get(obs.section_key) ?? []
-      arr.push(photo)
+      arr.push(...obsPhotos)
       photosBySection.set(obs.section_key, arr)
     }
   }
@@ -698,7 +738,7 @@ export async function buildReportDocx(data: ReportData): Promise<Buffer> {
   children.push(...buildActionsSummary(data.observations, SECTION_LABELS))
 
   // ── Recurring items ───────────────────────────────────────────────────────
-  children.push(...buildRecurringItems())
+  children.push(...buildRecurringItems(data.recurringItems))
 
   // ── Inspector declaration ─────────────────────────────────────────────────
   children.push(...buildDeclaration(data.inspectorName, data.inspectorTitle, data.inspectionDate, data.reportGeneratedAt))

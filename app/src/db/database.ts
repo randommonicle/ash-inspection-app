@@ -64,6 +64,15 @@ export async function initDatabase(): Promise<void> {
   // journal_mode=WAL returns a result set so must use query(), not execute()
   await db.query('PRAGMA journal_mode=WAL', [])
   await db.execute(CREATE_TABLES)
+
+  // Additive migrations — safe to run repeatedly (ALTER TABLE IF column not exists
+  // is not standard SQLite, so we catch the "duplicate column" error silently).
+  const migrations = [
+    `ALTER TABLE inspections ADD COLUMN report_sent INTEGER NOT NULL DEFAULT 0`,
+  ]
+  for (const sql of migrations) {
+    try { await db.execute(sql) } catch { /* column already exists */ }
+  }
 }
 
 function getDB(): SQLiteDBConnection {
@@ -94,6 +103,7 @@ export async function createInspection(params: {
     status: 'active',
     start_time: now,
     synced: false,
+    report_sent: false,
     created_at: now,
   }
   await getDB().run(
@@ -155,8 +165,13 @@ function rowToInspection(row: Record<string, unknown>): LocalInspection {
     start_time: row.start_time as string,
     end_time: row.end_time as string | undefined,
     synced: (row.synced as number) === 1,
+    report_sent: (row.report_sent as number) === 1,
     created_at: row.created_at as string,
   }
+}
+
+export async function markReportSent(id: string): Promise<void> {
+  await getDB().run(`UPDATE inspections SET report_sent=1 WHERE id=?`, [id])
 }
 
 // ─── Observations ─────────────────────────────────────────────────────────────
@@ -184,6 +199,26 @@ export async function updateObservationSection(id: string, section_key: SectionK
   await getDB().run(
     `UPDATE observations SET section_key=?, template_order=?, classification_conf='manual' WHERE id=?`,
     [section_key, template_order, id]
+  )
+}
+
+export async function appendObservationNarration(
+  id: string,
+  extra: string,
+  section_key: SectionKey,
+  template_order: number,
+): Promise<void> {
+  // Append the new transcript to the existing narration with a space separator,
+  // and update the section/confidence in case re-classification changed it.
+  await getDB().run(
+    `UPDATE observations
+        SET raw_narration       = raw_narration || ' ' || ?,
+            section_key         = ?,
+            template_order      = ?,
+            classification_conf = 'auto',
+            synced              = 0
+      WHERE id = ?`,
+    [extra, section_key, template_order, id]
   )
 }
 

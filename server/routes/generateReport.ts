@@ -4,7 +4,7 @@ import { supabase } from '../services/supabase'
 import { MODELS } from '../config/models'
 import { PROCESS_OBSERVATION_PROMPT } from '../prompts/processObservation'
 import { GENERATE_SUMMARY_PROMPT } from '../prompts/generateSummary'
-import { buildReportDocx, type ReportObservation, type ReportPhoto } from '../services/reportGenerator'
+import { buildReportDocx, type ReportObservation, type ReportPhoto, type RecurringItem } from '../services/reportGenerator'
 import { sendReportEmail } from '../services/email'
 
 const router  = Router()
@@ -42,6 +42,60 @@ async function processObservation(obs: RawObservation): Promise<ProcessedResult>
   const parsed = JSON.parse(text) as ProcessedResult
   console.log(`[REPORT] Observation processed — risk: ${parsed.risk_level ?? 'none'}, action: ${parsed.action_text ? 'yes' : 'no'}`)
   return parsed
+}
+
+interface PreviousAction {
+  id: string
+  section_key: string
+  action_text: string
+}
+
+async function identifyRecurringItems(
+  previousActions: PreviousAction[],
+  currentObservations: ReportObservation[],
+  previousDate: string,
+): Promise<RecurringItem[]> {
+  if (previousActions.length === 0 || currentObservations.length === 0) return []
+
+  console.log(`[REPORT] Comparing ${previousActions.length} previous actions against ${currentObservations.length} current observations`)
+
+  const prompt = `You are reviewing two property inspection reports to identify recurring maintenance issues.
+
+PREVIOUS INSPECTION ACTIONS (items that required action last time):
+${previousActions.map((a, i) => `[${i}] Section: ${a.section_key}\n    Action: ${a.action_text}`).join('\n\n')}
+
+CURRENT INSPECTION OBSERVATIONS:
+${currentObservations.map((o, i) => `[${i}] Section: ${o.section_key}\n    Observation: ${o.processed_text}`).join('\n\n')}
+
+Identify which previous actions appear to STILL BE OUTSTANDING based on the current observations. An issue is recurring if:
+- The current inspection describes the same or similar defect in the same area, OR
+- The current inspection makes no mention of the area/issue being resolved
+
+An issue is NOT recurring if the current inspection explicitly notes it has been repaired, resolved, or is now satisfactory.
+
+Return a JSON array of indices (numbers) from the PREVIOUS INSPECTION ACTIONS list that are still outstanding. Return an empty array [] if all issues have been resolved.
+Do not wrap your response in markdown code fences.`
+
+  const msg = await anthropic.messages.create({
+    model:      MODELS.OBSERVATION,
+    max_tokens: 256,
+    messages:   [{ role: 'user', content: prompt }],
+  })
+
+  const raw  = msg.content[0].type === 'text' ? msg.content[0].text : '[]'
+  const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+  const indices: number[] = JSON.parse(text)
+
+  const items: RecurringItem[] = indices
+    .filter(i => i >= 0 && i < previousActions.length)
+    .map(i => ({
+      section_key:  previousActions[i].section_key,
+      issue:        previousActions[i].action_text,
+      previousDate,
+    }))
+
+  console.log(`[REPORT] Identified ${items.length} recurring item(s)`)
+  return items
 }
 
 async function generateSummary(observations: ReportObservation[]): Promise<string> {
@@ -161,12 +215,64 @@ router.post('/', async (req: Request, res: Response) => {
       })
     }
 
-    // ── 3. Generate overall summary ───────────────────────────────────────────
+    // ── 3. Identify recurring items from previous inspection ──────────────────
+    let recurringItems: RecurringItem[] = []
+    try {
+      // Find the most recent completed inspection for this property BEFORE this one
+      // Include both 'completed' and 'report_generated' — once a report is
+      // generated the status becomes 'report_generated', so querying only
+      // 'completed' would never find a previous inspection that had a report.
+      const { data: prevRows } = await supabase
+        .from('inspections')
+        .select('id, start_time')
+        .eq('property_id', inspection.property_id)
+        .in('status', ['completed', 'report_generated'])
+        .neq('id', inspection_id)
+        .lt('start_time', inspection.start_time)
+        .order('start_time', { ascending: false })
+        .limit(1)
+
+      const prevInspection = prevRows?.[0] ?? null
+      console.log(`[RECURRING] property_id=${inspection.property_id}, current start=${inspection.start_time}`)
+      console.log(`[RECURRING] Previous inspection found: ${prevInspection ? prevInspection.id : 'NONE'}`)
+
+      if (prevInspection) {
+        const prevDate = new Date(prevInspection.start_time).toLocaleDateString('en-GB', {
+          day: 'numeric', month: 'long', year: 'numeric',
+        })
+
+        const { data: prevObs, error: prevObsErr } = await supabase
+          .from('observations')
+          .select('id, section_key, action_text')
+          .eq('inspection_id', prevInspection.id)
+          .not('action_text', 'is', null)
+
+        if (prevObsErr) console.warn('[RECURRING] Error fetching previous observations:', prevObsErr.message)
+        console.log(`[RECURRING] Previous observations with action_text: ${prevObs?.length ?? 0}`)
+
+        const previousActions: PreviousAction[] = (prevObs ?? [])
+          .filter((o: any) => o.action_text)
+          .map((o: any) => ({ id: o.id, section_key: o.section_key, action_text: o.action_text }))
+
+        if (previousActions.length === 0) {
+          console.log('[RECURRING] No previous actions found — either no issues were flagged last time, or report was never generated for that inspection')
+        }
+
+        recurringItems = await identifyRecurringItems(previousActions, processedObservations, prevDate)
+      } else {
+        console.log('[RECURRING] No previous inspection found — this may be the first inspection for this property, or all prior inspections are newer than this one')
+      }
+    } catch (err) {
+      console.warn('[REPORT] Recurring items check failed (non-fatal):', err)
+      recurringItems = []
+    }
+
+    // ── 4. Generate overall summary ───────────────────────────────────────────
     const overallSummary = processedObservations.length > 0
       ? await generateSummary(processedObservations)
       : 'No observations were recorded during this inspection.'
 
-    // ── 4. Fetch photos and download image data ───────────────────────────────
+    // ── 5. Fetch photos and download image data ───────────────────────────────
     const { data: rawPhotos, error: photoErr } = await supabase
       .from('photos')
       .select('id, observation_id, storage_path, caption, opus_description')
@@ -206,7 +312,7 @@ router.post('/', async (req: Request, res: Response) => {
       })
     }
 
-    // ── 5. Build Word document ────────────────────────────────────────────────
+    // ── 6. Build Word document ────────────────────────────────────────────────
     const docxBuffer = await buildReportDocx({
       propertyName,
       propertyRef,
@@ -225,9 +331,10 @@ router.post('/', async (req: Request, res: Response) => {
       observations:     processedObservations,
       photos:           reportPhotos,
       reportGeneratedAt,
+      recurringItems,
     })
 
-    // ── 6. Upload to Supabase Storage ─────────────────────────────────────────
+    // ── 7. Upload to Supabase Storage ─────────────────────────────────────────
     const storagePath = `${inspection.property_id}/${inspection_id}/report.docx`
     const { error: uploadErr } = await supabase.storage
       .from('inspection-files')
@@ -242,13 +349,13 @@ router.post('/', async (req: Request, res: Response) => {
       console.log(`[REPORT] Report uploaded to ${storagePath}`)
     }
 
-    // ── 7. Update inspection status ───────────────────────────────────────────
+    // ── 8. Update inspection status ───────────────────────────────────────────
     await supabase.from('inspections').update({
       status:          'report_generated',
       report_docx_url: storagePath,
     }).eq('id', inspection_id)
 
-    // ── 8. Send email ─────────────────────────────────────────────────────────
+    // ── 9. Send email ─────────────────────────────────────────────────────────
     const filename = `ASH_Inspection_${propertyRef}_${inspectionDate.replace(/\s/g, '_')}.docx`
 
     if (process.env.RESEND_API_KEY) {

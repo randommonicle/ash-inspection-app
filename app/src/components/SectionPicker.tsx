@@ -14,19 +14,19 @@ export function SectionPicker({ current, onSelect, onClose }: Props) {
         onClick={e => e.stopPropagation()}
       >
         <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-          <span className="font-semibold text-ash-navy text-sm">Assign to section</span>
-          <button onClick={onClose} className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-500 text-base active:bg-gray-200">✕</button>
+          <span className="font-semibold text-ash-navy text-base">Assign to section</span>
+          <button onClick={onClose} className="w-11 h-11 flex items-center justify-center rounded-full bg-gray-100 text-gray-500 text-lg active:bg-gray-200">✕</button>
         </div>
         <ul className="divide-y divide-gray-50">
           {SECTION_ORDER.map(key => (
             <li key={key}>
               <button
                 onClick={() => onSelect(key)}
-                className={`w-full text-left px-4 py-3 text-sm transition active:bg-gray-50
+                className={`w-full text-left px-4 py-4 text-base transition active:bg-gray-50
                   ${key === current ? 'text-ash-navy font-semibold bg-ash-light/30' : 'text-gray-700'}`}
               >
                 {SECTION_LABELS[key]}
-                {key === current && <span className="ml-2 text-xs text-ash-mid">current</span>}
+                {key === current && <span className="ml-2 text-sm text-ash-mid">current</span>}
               </button>
             </li>
           ))}

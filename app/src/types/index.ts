@@ -79,6 +79,7 @@ export interface LocalInspection {
   start_time: string
   end_time?: string
   synced: boolean
+  report_sent: boolean
   created_at: string
 }
 

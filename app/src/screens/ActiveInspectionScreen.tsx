@@ -16,7 +16,7 @@ import { classifyNarration } from '../services/classify'
 import {
   getInspection, completeInspection,
   createObservation, getObservationsForInspection,
-  updateObservationSection,
+  updateObservationSection, appendObservationNarration,
   createPhoto, getPhotosForInspection,
 } from '../db/database'
 import {
@@ -54,6 +54,9 @@ export function ActiveInspectionScreen() {
 
   // Manual override picker
   const [pickerFor, setPickerFor] = useState<string | null>(null) // observationId
+
+  // "Add more" — when set, the next recording appends to this observation
+  const [appendingToId, setAppendingToId] = useState<string | null>(null)
 
   const feedRef      = useRef<HTMLDivElement>(null)
   const startTimeRef = useRef<number>(Date.now())
@@ -109,6 +112,11 @@ export function ActiveInspectionScreen() {
     if (!inspectionId || !profile || !inspection) return
     setIsTranscribing(true)
     setError('')
+
+    // Capture and clear append mode before any async work
+    const targetId = appendingToId
+    setAppendingToId(null)
+
     try {
       const transcript = await transcribeAudio(blob)
       if (!transcript) {
@@ -116,6 +124,26 @@ export function ActiveInspectionScreen() {
         return
       }
 
+      // ── Append mode: extend an existing observation ──────────────────────
+      if (targetId) {
+        let result
+        try {
+          result = await classifyNarration(transcript)
+        } catch {
+          result = { section_key: 'additional' as const, confidence: 'low' as const, split_required: false }
+        }
+        await appendObservationNarration(
+          targetId, transcript, result.section_key, SECTION_TEMPLATE_ORDER[result.section_key]
+        )
+        setObservations(prev => prev.map(o =>
+          o.id === targetId
+            ? { ...o, raw_narration: `${o.raw_narration} ${transcript}`, section_key: result.section_key, template_order: SECTION_TEMPLATE_ORDER[result.section_key] }
+            : o
+        ))
+        return
+      }
+
+      // ── Normal mode: create a new observation ────────────────────────────
       let result
       try {
         result = await classifyNarration(transcript)
@@ -127,7 +155,6 @@ export function ActiveInspectionScreen() {
       }
 
       if (result.split_required && typeof result.split_at === 'number' && result.split_at > 0 && result.split_at < transcript.length) {
-        // Two sections in one narration — split and save both
         const first  = transcript.slice(0, result.split_at).trim()
         const second = transcript.slice(result.split_at).trim()
         const firstResult  = await classifyNarration(first)
@@ -138,7 +165,6 @@ export function ActiveInspectionScreen() {
       }
 
       if (result.confidence === 'low') {
-        // Save with suggested section, but ask PM to confirm
         const obs = await saveObservation(transcript, result.section_key, 'auto')
         if (obs) {
           setPending({
@@ -150,17 +176,17 @@ export function ActiveInspectionScreen() {
         return
       }
 
-      // High or medium confidence — save directly
       await saveObservation(transcript, result.section_key, 'auto')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Transcription failed')
     } finally {
       setIsTranscribing(false)
     }
-  }, [inspectionId, profile, inspection, saveObservation])
+  }, [inspectionId, profile, inspection, saveObservation, appendingToId])
 
   const confirmPending = useCallback(() => {
     setPending(null)
+    setAppendingToId(null)
   }, [])
 
   const handleManualOverride = useCallback(async (observationId: string, newSection: SectionKey) => {
@@ -199,10 +225,14 @@ export function ActiveInspectionScreen() {
         webPath    = Capacitor.convertFileSrc(localPath)
       }
 
+      // Auto-link to the most recent observation so the photo appears
+      // inside the feed item rather than in the "Unlinked photos" strip.
+      const lastObs = observations[observations.length - 1]
       const savedPhoto = await createPhoto({
-        inspection_id: inspectionId,
-        local_path:    localPath,
-        web_path:      webPath,
+        inspection_id:  inspectionId,
+        observation_id: lastObs?.id,
+        local_path:     localPath,
+        web_path:       webPath,
       })
       setPhotos(prev => [...prev, savedPhoto])
     } catch (err: unknown) {
@@ -210,20 +240,27 @@ export function ActiveInspectionScreen() {
         setError('Camera error — please try again')
       }
     }
-  }, [inspectionId])
+  }, [inspectionId, observations])
 
   const handleComplete = useCallback(async () => {
     if (!inspectionId) return
     setCompleting(true)
     try {
       await completeInspection(inspectionId)
-      navigate('/properties')
+      // Navigate to the property detail screen so the user can see the
+      // upload progress and, once synced, trigger the report from there.
+      const propId = property?.id ?? inspection?.property_id
+      if (propId) {
+        navigate(`/properties/${propId}`, { state: { property } })
+      } else {
+        navigate('/properties')
+      }
       triggerSync().catch(() => {})
     } catch {
       setError('Failed to complete inspection')
       setCompleting(false)
     }
-  }, [inspectionId, navigate])
+  }, [inspectionId, navigate, triggerSync, property, inspection])
 
   const formatTime = (s: number) => {
     const m   = Math.floor(s / 60).toString().padStart(2, '0')
@@ -271,7 +308,7 @@ export function ActiveInspectionScreen() {
             {currentSection
               ? `Last section: ${SECTION_LABELS[currentSection]}`
               : observations.length === 0
-                ? 'Ready — hold the button to record your first observation'
+                ? 'Ready — tap the button below to record your first observation'
                 : `${observations.length} observation${observations.length === 1 ? '' : 's'} recorded`
             }
           </p>
@@ -281,19 +318,19 @@ export function ActiveInspectionScreen() {
       {/* Low-confidence banner */}
       {pending && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-3 flex-shrink-0">
-          <p className="text-amber-800 text-xs font-medium mb-2">
+          <p className="text-amber-800 text-sm font-medium mb-2">
             Not sure — classified as <span className="font-bold">{SECTION_LABELS[pending.suggestedSection]}</span>. Correct?
           </p>
           <div className="flex gap-2">
             <button
               onClick={confirmPending}
-              className="flex-1 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-semibold active:opacity-80"
+              className="flex-1 py-3 rounded-lg bg-amber-600 text-white text-sm font-semibold active:opacity-80"
             >
               Yes, correct
             </button>
             <button
               onClick={() => { setPickerFor(pending.observationId); setPending(null) }}
-              className="flex-1 py-1.5 rounded-lg border border-amber-400 text-amber-700 text-xs font-semibold active:opacity-80"
+              className="flex-1 py-3 rounded-lg border border-amber-400 text-amber-700 text-sm font-semibold active:opacity-80"
             >
               Change section
             </button>
@@ -306,15 +343,20 @@ export function ActiveInspectionScreen() {
         {observations.length === 0 && !isTranscribing && (
           <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 py-16 space-y-2">
             <p className="text-4xl">🎙</p>
-            <p className="text-sm">Hold the record button and narrate your observations.<br />Release when done.</p>
+            <p className="text-sm">Tap the record button and narrate your observation.<br />Tap again when done. Use × to discard.</p>
           </div>
         )}
-        {observations.map(obs => (
+        {observations.map((obs, idx) => (
           <ObservationFeedItem
             key={obs.id}
             observation={obs}
             photos={photos}
-            onOverride={() => setPickerFor(obs.id)}
+            onOverride={() => { setAppendingToId(null); setPickerFor(obs.id) }}
+            onAppend={idx === observations.length - 1
+              ? () => setAppendingToId(prev => prev === obs.id ? null : obs.id)
+              : undefined
+            }
+            isAppendTarget={appendingToId === obs.id}
           />
         ))}
         {isTranscribing && (
@@ -346,26 +388,28 @@ export function ActiveInspectionScreen() {
 
       {/* Controls */}
       <div className="bg-white border-t border-gray-100 shadow-md px-6 pt-4 pb-8 flex-shrink-0">
-        <div className="flex items-end justify-center gap-8 mb-5">
-          <button
-            onClick={handleCamera}
-            disabled={isTranscribing || completing}
-            className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center active:scale-95 transition disabled:opacity-40"
-          >
-            <CameraIcon />
-          </button>
+        <div className="flex items-end justify-center mb-5">
           <RecordButton
             onRecordingComplete={handleRecordingComplete}
             disabled={completing}
             isTranscribing={isTranscribing}
+            appendMode={appendingToId !== null}
+            rightSlot={
+              <button
+                onClick={handleCamera}
+                disabled={isTranscribing || completing}
+                className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center active:scale-95 transition disabled:opacity-40"
+              >
+                <CameraIcon />
+              </button>
+            }
           />
-          <div className="w-14 h-14" />
         </div>
 
         <button
           onClick={handleComplete}
           disabled={completing || isTranscribing || observations.length === 0}
-          className="w-full py-3.5 rounded-xl border-2 border-ash-navy text-ash-navy font-bold text-sm active:scale-[0.98] transition disabled:opacity-40"
+          className="w-full py-4 rounded-xl border-2 border-ash-navy text-ash-navy font-bold text-base active:scale-[0.98] transition disabled:opacity-40"
         >
           {completing ? 'Completing…' : '✓  Complete Inspection'}
         </button>
