@@ -96,7 +96,8 @@ This is the setup needed when the app will be used over mobile data (not on the 
 | 3 | ✅ Done | AI classification, section picker, low-confidence banner |
 | 4 | ✅ Done | Full sync queue, photo upload, Opus image analysis, sync status indicator |
 | 5 | ✅ Done | Observation processing, AI summary, Word report generation, Resend email |
-| 6 | ⬜ Next | Section review screen, inspection summary screen, report preview, property flags editor |
+| 5.5 | ✅ Done | First 4G field test, recurring items, PDF generation, dual email, property autocorrect, photo appendix groundwork |
+| 6 | ⬜ Next | Photo appendix with section links, tap-to-fullscreen in app, duplicate image grouping, server deployment |
 
 ---
 
@@ -149,14 +150,15 @@ This is the setup needed when the app will be used over mobile data (not on the 
 
 **Flow** (`server/routes/generateReport.ts`):
 1. Fetch inspection, property (with flags), inspector details from Supabase
-2. Fetch and process all observations — Sonnet converts raw narrations to professional text + action + risk level. Saves back to Supabase.
-3. **Recurring items** — finds the most recent previous inspection for the same property (status `completed` OR `report_generated`), fetches its observations that had `action_text`, then asks Sonnet which are still outstanding in the current observations. Results appear in the "Matters Arising from Previous Inspection" table in the report.
+2. Fetch and process all observations — Sonnet converts raw narrations to professional text + action + risk level. Property name/ref/address passed as context so phonetic misspellings from voice narration are auto-corrected. Saves back to Supabase.
+3. **Recurring items** — finds the most recent previous inspection for the same property (status `completed` OR `report_generated`), fetches its observations that had `action_text`, then asks Sonnet which are still outstanding in the current observations. Results appear in the "Matters Arising from Previous Inspection" table in the report. Entire step is non-fatal — returns empty list on any error.
 4. Generate AI overall condition summary (Sonnet)
-5. Download all photos from Supabase Storage
+5. Download all photos from Supabase Storage. If any photo has no `opus_description` (e.g. server was down during sync), Opus analysis runs inline here and saves back to Supabase.
 6. Build Word document matching ASH template (`server/services/reportGenerator.ts`)
 7. Upload `report.docx` to Supabase Storage at `/{property_id}/{inspection_id}/report.docx`
 8. Update inspection status to `report_generated`
-9. Send email via Resend with .docx attached
+9. Convert DOCX to PDF via LibreOffice (`server/services/pdf.ts`) — skipped gracefully if LibreOffice not installed
+10. Send email via Resend with both DOCX and PDF attached (DOCX for internal editing, PDF as client-ready copy)
 
 **Report sent persistence:**
 - After a successful report send, `report_sent=1` is written to local SQLite
@@ -229,11 +231,82 @@ Run `grep -r "TODO \[PRODUCTION\]"` from the repo root to list them all at once.
 - [ ] **`allowNavigation` IP whitelist** — `app/capacitor.config.ts`
       Replace `192.168.1.108` with the production server domain
 
-- [ ] **PDF generation** — report is sent as `.docx` only; add LibreOffice/headless
-      conversion on the server if a PDF copy is required
-
 - [ ] **Server deployment** — currently runs locally; deploy to Railway or Render for
-      permanent HTTPS hosting so field tests don't need the work PC left on
+      permanent HTTPS hosting so field tests don't need the work PC left on.
+      LibreOffice must be included in the server container for PDF generation to work in production.
+
+---
+
+## Phase 6 — planned features
+
+These were agreed after the first field test with Pete Birch on 1 May 2026.
+
+**Photo appendix with section links** (`server/services/reportGenerator.ts`)
+- Add bookmarks to each section heading in the Word document
+- Build an appendix at the end with small photo thumbnails
+- Each thumbnail is a clickable internal hyperlink back to its section
+- Medium effort, high value for longer inspections with many photos
+
+**Tap-to-fullscreen photo viewer** (`app/src/screens/ActiveInspectionScreen.tsx` or new component)
+- Tapping a photo thumbnail during an inspection opens it full-screen with the Opus caption
+- Low effort, improves usability during review
+
+**Duplicate image grouping** (`server/routes/generateReport.ts`)
+- If Opus identifies multiple photos of the same subject (via description similarity), keep one in the section and move the rest to the appendix
+- Prevents the same wall/defect appearing three times in the same section
+- Medium effort
+
+**PDF workflow — future phase**
+- Currently: DOCX and PDF both emailed to the inspector
+- Future: inspector edits DOCX in Word if needed, re-uploads to trigger PDF re-generation and re-send
+- Implementation: "Upload revised report" button in PropertyDetailScreen → uploads to Supabase Storage → server converts and re-emails
+
+**Opus → Sonnet supplementary observations** (future)
+- If Opus identifies something notable in a photo that has no matching observation in that section, Sonnet drafts a supplementary observation
+- Requires careful deduplication against existing narrations
+
+**Photo-only inspection mode** (future)
+- Inspector takes photos only, no voice narrations
+- Opus classifies each photo into the correct section
+- Sonnet drafts observations from Opus descriptions alone
+
+**Inspector signature on report** (future)
+- Option A: stored signature image applied automatically
+- Option B: inspector prompted to sign on their phone at report generation, appended to document
+
+**Confidence banner improvement** (done 1 May 2026)
+- Banner now says "Not sure about the last observation ↓"
+- Relevant observation card highlighted with amber border matching the banner colour
+
+---
+
+## Server management
+
+**Starting the server:**
+```
+cd C:\Users\ben\ash-inspection-app\server
+npm run dev
+```
+
+**Restarting cleanly** (use this instead of Ctrl+C to avoid port-in-use errors):
+```
+npm run restart
+```
+This kills port 3001 and restarts in one step. tsx watch spawns child processes that don't die cleanly with Ctrl+C on Windows — `npm run restart` handles this properly.
+
+**If port 3001 is stuck and npm run restart fails**, Claude can run this PowerShell command:
+```
+Stop-Process -Id (Get-NetTCPConnection -LocalPort 3001).OwningProcess -Force
+```
+
+**Cloudflared tunnel** (field tests only):
+```
+cloudflared tunnel --url http://localhost:3001
+```
+- Installed at `C:\Windows\System32\cloudflared.exe` on the work PC
+- The tunnel URL changes every restart — update `app/.env.local` and rebuild the app each time
+- Leave the cloudflared window open all day — closing it drops the tunnel
+- Do NOT restart cloudflared unless necessary; restarting the server does not affect the tunnel
 
 ---
 
@@ -253,7 +326,7 @@ ash-inspection-app/
 │   └── android/                # Capacitor Android project
 ├── server/                     # Node.js Express backend
 │   ├── routes/                 # classify.ts, analysePhoto.ts, generateReport.ts
-│   ├── services/               # anthropic.ts, supabase.ts, reportGenerator.ts, email.ts
+│   ├── services/               # anthropic.ts, supabase.ts, reportGenerator.ts, email.ts, pdf.ts
 │   ├── prompts/                # classify.ts, analyseImage.ts, processObservation.ts, generateSummary.ts
 │   └── config/models.ts        # Model names — single source of truth
 └── supabase/
