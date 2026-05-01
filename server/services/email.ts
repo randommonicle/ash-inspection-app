@@ -9,11 +9,12 @@ export interface ReportEmailParams {
   propertyRef: string
   inspectionDate: string
   docxBuffer: Buffer
-  filename: string
+  filename: string          // base filename without extension, e.g. "ASH_Inspection_B69_1_May_2026"
+  pdfBuffer?: Buffer | null // optional — attached if provided
 }
 
 export async function sendReportEmail(params: ReportEmailParams): Promise<void> {
-  const { to, inspectorName, propertyName, propertyRef, inspectionDate, docxBuffer, filename } = params
+  const { to, inspectorName, propertyName, propertyRef, inspectionDate, docxBuffer, filename, pdfBuffer } = params
 
   // TODO [PRODUCTION]: Remove REPORT_TO_OVERRIDE from server/.env entirely.
   // With it set, ALL reports go to one address regardless of who's logged in.
@@ -38,10 +39,16 @@ export async function sendReportEmail(params: ReportEmailParams): Promise<void> 
       <p>ASH Chartered Surveyors</p>
     `,
     attachments: [
+      // DOCX — for internal editing
       {
-        filename,
-        content: docxBuffer.toString('base64'),
+        filename: `${filename}.docx`,
+        content:  docxBuffer.toString('base64'),
       },
+      // PDF — client-ready copy, only attached if LibreOffice conversion succeeded
+      ...(pdfBuffer ? [{
+        filename: `${filename}.pdf`,
+        content:  pdfBuffer.toString('base64'),
+      }] : []),
     ],
   })
 

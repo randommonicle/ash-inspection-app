@@ -83,6 +83,7 @@ This is the setup needed when the app will be used over mobile data (not on the 
 - **API keys** live in `server/.env` and `app/.env.local` — neither is committed to git
 - **Model routing is a hard rule**: image analysis = `claude-opus-4-6`, everything else = `claude-sonnet-4-6`. Only defined in `server/config/models.ts` — never hardcode model names elsewhere
 - **iOS not supported yet** — testing is Android only. iOS requires macOS + Xcode + Apple Developer account
+- **LibreOffice required for PDF generation** — installed on the work PC. NOT yet installed on Ben's home PC — if testing at home over a weekend, install from https://www.libreoffice.org/download/libreoffice-still/ before running the server. Without it the server will still generate and email the DOCX but will skip the PDF.
 
 ---
 

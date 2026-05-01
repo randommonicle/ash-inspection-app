@@ -6,6 +6,7 @@ import { PROCESS_OBSERVATION_PROMPT } from '../prompts/processObservation'
 import { GENERATE_SUMMARY_PROMPT } from '../prompts/generateSummary'
 import { buildReportDocx, type ReportObservation, type ReportPhoto, type RecurringItem } from '../services/reportGenerator'
 import { sendReportEmail } from '../services/email'
+import { convertDocxToPdf } from '../services/pdf'
 
 const router  = Router()
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -398,9 +399,11 @@ router.post('/', async (req: Request, res: Response) => {
       report_docx_url: storagePath,
     }).eq('id', inspection_id)
 
-    // ── 9. Send email ─────────────────────────────────────────────────────────
-    const filename = `ASH_Inspection_${propertyRef}_${inspectionDate.replace(/\s/g, '_')}.docx`
+    // ── 9. Convert to PDF (LibreOffice) ──────────────────────────────────────
+    const baseFilename = `ASH_Inspection_${propertyRef}_${inspectionDate.replace(/\s/g, '_')}`
+    const pdfBuffer = await convertDocxToPdf(docxBuffer, baseFilename)
 
+    // ── 10. Send email ────────────────────────────────────────────────────────
     if (process.env.RESEND_API_KEY) {
       await sendReportEmail({
         to:             inspectorEmail,
@@ -409,7 +412,8 @@ router.post('/', async (req: Request, res: Response) => {
         propertyRef,
         inspectionDate,
         docxBuffer,
-        filename,
+        filename:  baseFilename,
+        pdfBuffer,
       })
     } else {
       console.warn('[REPORT] RESEND_API_KEY not set — skipping email send')
