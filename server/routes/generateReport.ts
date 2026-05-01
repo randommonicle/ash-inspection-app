@@ -26,14 +26,30 @@ interface ProcessedResult {
   risk_level: 'High' | 'Medium' | 'Low' | null
 }
 
-async function processObservation(obs: RawObservation): Promise<ProcessedResult> {
+interface PropertyContext {
+  propertyName:    string
+  propertyRef:     string
+  propertyAddress: string
+}
+
+async function processObservation(obs: RawObservation, ctx: PropertyContext): Promise<ProcessedResult> {
   console.log(`[REPORT] Processing observation ${obs.id} (${obs.section_key})`)
+
+  // Prepend property context so Sonnet can autocorrect any phonetic misspellings
+  // of the property name, reference, or address that occur in voice narrations.
+  const userContent = `PROPERTY CONTEXT (use these exact spellings if the narration mentions the property):
+Property name: ${ctx.propertyName}
+Property ref: ${ctx.propertyRef}
+Property address: ${ctx.propertyAddress}
+
+NARRATION:
+${obs.raw_narration ?? ''}`
 
   const msg = await anthropic.messages.create({
     model:      MODELS.OBSERVATION,
     max_tokens: 512,
     system:     PROCESS_OBSERVATION_PROMPT,
-    messages:   [{ role: 'user', content: obs.raw_narration ?? '' }],
+    messages:   [{ role: 'user', content: userContent }],
   })
 
   const raw  = msg.content[0].type === 'text' ? msg.content[0].text : ''
@@ -73,8 +89,9 @@ Identify which previous actions appear to STILL BE OUTSTANDING based on the curr
 
 An issue is NOT recurring if the current inspection explicitly notes it has been repaired, resolved, or is now satisfactory.
 
-Return a JSON array of indices (numbers) from the PREVIOUS INSPECTION ACTIONS list that are still outstanding. Return an empty array [] if all issues have been resolved.
-Do not wrap your response in markdown code fences.`
+IMPORTANT: Your response must be ONLY a valid JSON array of integers, with no other text before or after it.
+Examples of valid responses: [0, 2]   or   [1]   or   []
+Do not explain your reasoning. Do not use markdown. Output the JSON array and nothing else.`
 
   const msg = await anthropic.messages.create({
     model:      MODELS.OBSERVATION,
@@ -84,7 +101,16 @@ Do not wrap your response in markdown code fences.`
 
   const raw  = msg.content[0].type === 'text' ? msg.content[0].text : '[]'
   const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
-  const indices: number[] = JSON.parse(text)
+
+  // If the model ignored instructions and returned prose, try to extract an array literal
+  let indices: number[]
+  try {
+    indices = JSON.parse(text)
+  } catch {
+    const match = text.match(/\[[\d,\s]*\]/)
+    indices = match ? JSON.parse(match[0]) : []
+    if (!match) console.warn('[RECURRING] Model returned non-JSON — defaulting to no recurring items. Raw:', text.slice(0, 120))
+  }
 
   const items: RecurringItem[] = indices
     .filter(i => i >= 0 && i < previousActions.length)
@@ -192,7 +218,7 @@ router.post('/', async (req: Request, res: Response) => {
         }
       } else if (obs.raw_narration) {
         try {
-          result = await processObservation(obs)
+          result = await processObservation(obs, { propertyName, propertyRef, propertyAddress })
           await supabase.from('observations').update({
             processed_text: result.processed_text,
             action_text:    result.action_text,
@@ -303,11 +329,28 @@ router.post('/', async (req: Request, res: Response) => {
         }
       }
 
+      // If the photo was never analysed (e.g. server was down during sync),
+      // run Opus analysis now so the caption still appears in the report.
+      let opusDescription = photo.opus_description ?? null
+      if (!opusDescription && imageBuffer) {
+        try {
+          console.log(`[REPORT] Photo ${photo.id} has no Opus description — analysing now`)
+          const base64 = imageBuffer.toString('base64')
+          const { analyseImage } = await import('../services/anthropic')
+          opusDescription = await analyseImage(base64, 'image/jpeg')
+          // Save back so future reports don't need to re-analyse
+          await supabase.from('photos').update({ opus_description: opusDescription }).eq('id', photo.id)
+          console.log(`[REPORT] Late analysis complete for ${photo.id}: "${opusDescription.suggested_caption}"`)
+        } catch (err) {
+          console.warn(`[REPORT] Late analysis failed for ${photo.id}:`, err)
+        }
+      }
+
       reportPhotos.push({
         id:               photo.id,
         observation_id:   photo.observation_id ?? null,
         caption:          photo.caption ?? null,
-        opus_description: photo.opus_description ?? null,
+        opus_description: opusDescription,
         imageBuffer,
       })
     }
