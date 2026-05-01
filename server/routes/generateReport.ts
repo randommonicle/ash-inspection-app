@@ -420,7 +420,7 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     console.log(`[REPORT] Report generation complete for inspection ${inspection_id}`)
-    res.json({ success: true, filename })
+    res.json({ success: true, filename: baseFilename })
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
