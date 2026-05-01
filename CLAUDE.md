@@ -170,13 +170,41 @@ This is the setup needed when the app will be used over mobile data (not on the 
 
 ## Known issues / pre-production checklist
 
-- [ ] Deepgram API key is in `app/.env.local` (exposed in frontend bundle) — move transcription to backend
-- [ ] `android:usesCleartextTraffic="true"` and `allowMixedContent: true` in Capacitor config — remove when on HTTPS
-- [ ] CORS on server is wide open (`*`) — restrict to known origins
-- [ ] PDF generation not yet implemented — report is sent as .docx only
-- [ ] Recurring items comparison not yet implemented — shows "No recurring items" placeholder
-- [ ] Server needs deploying to Railway/Render for permanent cloud hosting (currently runs locally)
-- [ ] Resend domain verification needed for production email from address
+Every item below has a matching `// TODO [PRODUCTION]:` comment in the source file.
+Run `grep -r "TODO \[PRODUCTION\]"` from the repo root to list them all at once.
+
+- [ ] **Deepgram key in frontend bundle** — `app/src/services/transcription.ts`
+      Move to a `POST /api/transcribe` backend route; add `DEEPGRAM_API_KEY` to `server/.env`;
+      remove `VITE_DEEPGRAM_API_KEY` from `app/.env.local`
+
+- [ ] **Mixed-content / cleartext traffic** — `app/capacitor.config.ts` + `app/android/app/src/main/AndroidManifest.xml`
+      Remove `allowMixedContent: true` once the server is deployed behind HTTPS.
+      Verify no `android:usesCleartextTraffic="true"` in the merged release manifest.
+
+- [ ] **CORS wildcard** — `server/index.ts`
+      Replace `cors()` with `cors({ origin: ['https://app.ashproperty.co.uk'] })`
+
+- [ ] **Resend sender address** — `server/services/email.ts`
+      Verify `ashproperty.co.uk` in the Resend dashboard; change `from` to
+      `'ASH Inspection Reports <reports@ashproperty.co.uk>'` (or agreed address)
+
+- [ ] **Remove REPORT_TO_OVERRIDE** — `server/.env` + `server/services/email.ts`
+      Delete the env var so reports route to each inspector's own email
+
+- [ ] **Report header email address** — `server/services/reportGenerator.ts`
+      Replace `ben@ashproperty.co.uk` with the firm's general enquiries address
+
+- [ ] **Recurring items comparison** — `server/services/reportGenerator.ts`
+      Implement real previous-inspection comparison instead of the placeholder row
+
+- [ ] **`allowNavigation` IP whitelist** — `app/capacitor.config.ts`
+      Replace `192.168.1.108` with the production server domain
+
+- [ ] **PDF generation** — report is sent as `.docx` only; add LibreOffice/headless
+      conversion on the server if a PDF copy is required
+
+- [ ] **Server deployment** — currently runs locally; deploy to Railway or Render for
+      permanent HTTPS hosting so field tests don't need the work PC left on
 
 ---
 

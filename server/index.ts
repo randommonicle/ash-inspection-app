@@ -8,6 +8,10 @@ import generateReportRouter from './routes/generateReport'
 const app  = express()
 const port = process.env.PORT ?? 3001
 
+// TODO [PRODUCTION]: Replace the wildcard CORS origin with the specific
+// domain(s) the app will be served from, e.g.:
+//   app.use(cors({ origin: ['https://app.ashproperty.co.uk'] }))
+// Wildcard is acceptable during local / tunnel testing but must not go live.
 app.use(cors())
 app.use(express.json())
 

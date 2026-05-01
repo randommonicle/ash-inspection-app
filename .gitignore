@@ -22,3 +22,7 @@ Thumbs.db
 .vscode/
 *.suo
 *.user
+
+# Local binaries and scratch files
+cloudflared.exe
+docs_content.txt

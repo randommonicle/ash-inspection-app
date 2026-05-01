@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../contexts/AuthContext'
@@ -16,7 +16,22 @@ export function PropertyDetailScreen() {
   const [starting, setStarting]             = useState(false)
   const [generatingId, setGeneratingId]     = useState<string | null>(null)
   const [reportResult, setReportResult]     = useState<Record<string, 'sent' | 'error'>>({})
+  const [progress, setProgress]             = useState(0)
+  const [progressStage, setProgressStage]   = useState('')
   const [error, setError]                   = useState('')
+  const progressIntervalRef                 = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Known pipeline stages: [ms from start, target %, label]
+  // Timings are conservative — the bar waits at 95% until the API responds.
+  const PROGRESS_STAGES: [number, number, string][] = [
+    [0,     5,  'Fetching inspection data…'],
+    [2000,  18, 'Processing observations…'],
+    [12000, 55, 'Generating condition summary…'],
+    [22000, 68, 'Downloading photos…'],
+    [40000, 82, 'Building report document…'],
+    [55000, 91, 'Uploading report…'],
+    [65000, 95, 'Sending to your email…'],
+  ]
 
   useEffect(() => {
     if (!id) return
@@ -28,15 +43,46 @@ export function PropertyDetailScreen() {
   const handleGenerateReport = useCallback(async (inspectionId: string) => {
     setGeneratingId(inspectionId)
     setReportResult(prev => { const n = { ...prev }; delete n[inspectionId]; return n })
+
+    // Start fake stage-based progress
+    const startMs = Date.now()
+    setProgress(0)
+    setProgressStage(PROGRESS_STAGES[0][2])
+
+    progressIntervalRef.current = setInterval(() => {
+      const elapsed = Date.now() - startMs
+      let stageIdx = 0
+      for (let i = 0; i < PROGRESS_STAGES.length; i++) {
+        if (elapsed >= PROGRESS_STAGES[i][0]) stageIdx = i
+      }
+      const [stageStart, stagePct, stageLabel] = PROGRESS_STAGES[stageIdx]
+      const next = PROGRESS_STAGES[stageIdx + 1]
+      let pct = stagePct
+      if (next) {
+        const fraction = Math.min(1, (elapsed - stageStart) / (next[0] - stageStart))
+        pct = stagePct + (next[1] - stagePct) * fraction
+      }
+      setProgress(Math.round(pct))
+      setProgressStage(stageLabel)
+    }, 400)
+
     try {
       await generateReport(inspectionId)
+      // Snap to 100% with a success message
+      if (progressIntervalRef.current) { clearInterval(progressIntervalRef.current); progressIntervalRef.current = null }
+      setProgress(100)
+      setProgressStage('Report sent to your email ✓')
       setReportResult(prev => ({ ...prev, [inspectionId]: 'sent' }))
     } catch (err: unknown) {
       console.error('[PROPERTY DETAIL] Report generation failed:', err instanceof Error ? err.message : err)
+      if (progressIntervalRef.current) { clearInterval(progressIntervalRef.current); progressIntervalRef.current = null }
+      setProgress(0)
+      setProgressStage('')
       setReportResult(prev => ({ ...prev, [inspectionId]: 'error' }))
     } finally {
       setGeneratingId(null)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleDeleteInspection = async (id: string) => {
@@ -164,36 +210,43 @@ export function PropertyDetailScreen() {
                     )}
                     {/* Generate report — only shown for synced completed inspections */}
                     {ins.status === 'completed' && ins.synced && (
-                      <div className="mt-3 pt-3 border-t border-gray-100">
-                        {reportResult[ins.id] === 'error' ? (
-                          <div className="space-y-1.5">
-                            <p className="text-xs text-red-500 text-center">Report failed — please try again</p>
-                            <button
-                              onClick={e => { e.stopPropagation(); handleGenerateReport(ins.id) }}
-                              disabled={generatingId === ins.id}
-                              className="w-full py-2 rounded-lg bg-ash-navy text-white text-xs font-bold active:scale-[0.98] transition disabled:opacity-50"
-                            >
-                              Retry
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="space-y-1.5">
-                            {reportResult[ins.id] === 'sent' && (
-                              <p className="text-xs text-green-600 text-center font-medium">Report sent to your email</p>
-                            )}
-                            <button
-                              onClick={e => { e.stopPropagation(); handleGenerateReport(ins.id) }}
-                              disabled={generatingId === ins.id}
-                              className="w-full py-2 rounded-lg bg-ash-navy text-white text-xs font-bold active:scale-[0.98] transition disabled:opacity-50"
-                            >
-                              {generatingId === ins.id
-                                ? 'Generating report…'
-                                : reportResult[ins.id] === 'sent'
-                                  ? 'Regenerate Report'
-                                  : 'Generate Report'}
-                            </button>
+                      <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+
+                        {/* Progress bar — visible while generating */}
+                        {generatingId === ins.id && (
+                          <div className="space-y-1">
+                            <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-ash-navy rounded-full transition-all duration-500 ease-out"
+                                style={{ width: `${progress}%` }}
+                              />
+                            </div>
+                            <p className="text-xs text-gray-400 text-center">{progressStage}</p>
                           </div>
                         )}
+
+                        {/* Completion / error message */}
+                        {generatingId !== ins.id && reportResult[ins.id] === 'error' && (
+                          <p className="text-xs text-red-500 text-center">Report failed — please try again</p>
+                        )}
+                        {generatingId !== ins.id && reportResult[ins.id] === 'sent' && (
+                          <p className="text-xs text-green-600 text-center font-medium">Report sent to your email ✓</p>
+                        )}
+
+                        {/* Button */}
+                        <button
+                          onClick={e => { e.stopPropagation(); handleGenerateReport(ins.id) }}
+                          disabled={generatingId !== null}
+                          className="w-full py-2 rounded-lg bg-ash-navy text-white text-xs font-bold active:scale-[0.98] transition disabled:opacity-50"
+                        >
+                          {generatingId === ins.id
+                            ? progress === 100 ? 'Done!' : 'Generating…'
+                            : reportResult[ins.id] === 'error'
+                              ? 'Retry'
+                              : reportResult[ins.id] === 'sent'
+                                ? 'Regenerate Report'
+                                : 'Generate Report'}
+                        </button>
                       </div>
                     )}
                   </div>

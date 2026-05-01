@@ -1,7 +1,11 @@
 // Deepgram Nova-3 batch transcription (REST API)
-// Phase 2: called directly from the app after each recording chunk.
-// Phase 4: will be routed through the backend server when the sync
-//           architecture is in place and the API key moves server-side.
+// Called directly from the app after each recording.
+//
+// TODO [PRODUCTION]: Move transcription to the backend server to keep the
+// Deepgram API key out of the frontend bundle (currently exposed in the APK).
+// Add a POST /api/transcribe route that accepts the audio blob, calls Deepgram
+// server-side, and returns the transcript. Remove VITE_DEEPGRAM_API_KEY from
+// app/.env.local and add DEEPGRAM_API_KEY to server/.env instead.
 
 import { xhrFetch } from './supabase'
 

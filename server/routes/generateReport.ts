@@ -77,7 +77,7 @@ router.post('/', async (req: Request, res: Response) => {
     // ── 1. Fetch inspection, inspector, and property details ──────────────────
     const { data: inspection, error: inspErr } = await supabase
       .from('inspections')
-      .select('*, users(full_name, email), properties(name, ref, address, number_of_units, management_company, has_car_park, has_lift, has_roof_access)')
+      .select('*, users(full_name, email, job_title), properties(name, ref, address, number_of_units, management_company, has_car_park, has_lift, has_roof_access)')
       .eq('id', inspection_id)
       .single()
 
@@ -101,6 +101,7 @@ router.post('/', async (req: Request, res: Response) => {
     }
     const inspectorName   = user.full_name as string
     const inspectorEmail  = user.email as string
+    const inspectorTitle  = (user.job_title as string | null) ?? 'Property Manager'
 
     const startDate = new Date(inspection.start_time)
     const inspectionDate = startDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
@@ -219,6 +220,7 @@ router.post('/', async (req: Request, res: Response) => {
       weather:          inspection.weather ?? null,
       nextInspection:   inspection.next_inspection ?? null,
       inspectorName,
+      inspectorTitle,
       overallSummary,
       observations:     processedObservations,
       photos:           reportPhotos,

@@ -15,12 +15,18 @@ export interface ReportEmailParams {
 export async function sendReportEmail(params: ReportEmailParams): Promise<void> {
   const { to, inspectorName, propertyName, propertyRef, inspectionDate, docxBuffer, filename } = params
 
-  // REPORT_TO_OVERRIDE routes all reports to a fixed address during development.
-  // Remove this env var when per-inspector email routing is ready for production.
+  // TODO [PRODUCTION]: Remove REPORT_TO_OVERRIDE from server/.env entirely.
+  // With it set, ALL reports go to one address regardless of who's logged in.
+  // Without it, each report goes to the inspector's own email (the correct behaviour).
   const recipient = process.env.REPORT_TO_OVERRIDE ?? to
   console.log(`[EMAIL] Sending report to ${recipient} for ${propertyRef} — ${propertyName}`)
 
   const { error } = await resend.emails.send({
+    // TODO [PRODUCTION]: Replace with a verified ashproperty.co.uk sender once the
+    // domain is verified in the Resend dashboard (resend.com → Domains → Add Domain).
+    // e.g. 'ASH Inspection Reports <reports@ashproperty.co.uk>'
+    // The onboarding@resend.dev address only works while REPORT_TO_OVERRIDE is set
+    // (Resend free tier restricts unverified senders to your own confirmed email).
     from:    'ASH Inspection Reports <onboarding@resend.dev>',
     to:      recipient,
     subject: `Inspection Report — ${propertyName} (${propertyRef}) — ${inspectionDate}`,

@@ -98,6 +98,7 @@ export interface ReportData {
   weather: string | null
   nextInspection: string | null
   inspectorName: string
+  inspectorTitle: string
   overallSummary: string
   observations: ReportObservation[]
   photos: ReportPhoto[]
@@ -152,6 +153,8 @@ function buildHeader(): Header {
                     children: [t('1-5 Kew Place, Cheltenham GL53 7NQ', { size: 17, color: C.labelText })],
                   }),
                   new Paragraph({
+                    // TODO [PRODUCTION]: Replace ben@ashproperty.co.uk with the firm's
+                    // general enquiries address (e.g. info@ashproperty.co.uk) once confirmed.
                     children: [t('T: 01242 237274  |  ben@ashproperty.co.uk  |  ashproperty.co.uk', { size: 17, color: C.labelText })],
                   }),
                 ],
@@ -283,14 +286,14 @@ function sectionSubHeading(label: string): Paragraph {
 function actionBox(actionText: string | null): Table {
   const content = actionText ?? 'No action required at this time.'
   return new Table({
-    width: { size: 9360, type: WidthType.DXA },
-    columnWidths: [9360],
+    width: { size: 9906, type: WidthType.DXA },
+    columnWidths: [9906],
     rows: [
       new TableRow({
         children: [
           new TableCell({
             borders: border(C.midBlue, 6),
-            width: { size: 9360, type: WidthType.DXA },
+            width: { size: 9906, type: WidthType.DXA },
             shading: { fill: C.lightBlue, type: ShadingType.CLEAR },
             margins: { top: 100, bottom: 100, left: 140, right: 140 },
             children: [
@@ -384,13 +387,13 @@ function photoGrid(sectionLabel: string, photos: ReportPhoto[]): (Table | Paragr
 
     results.push(
       new Table({
-        width: { size: 9360, type: WidthType.DXA },
-        columnWidths: [4560, 4800],
+        width: { size: 9906, type: WidthType.DXA },
+        columnWidths: [4953, 4953],
         rows: [
           new TableRow({
             children: [
-              makePhotoCell(left, 4560),
-              right ? makePhotoCell(right, 4800) : makeEmptyCell(4800),
+              makePhotoCell(left, 4953),
+              right ? makePhotoCell(right, 4953) : makeEmptyCell(4953),
             ],
           }),
         ],
@@ -440,11 +443,11 @@ function buildActionsSummary(observations: ReportObservation[], sectionLabels: R
     const risk = obs.risk_level!
     return new TableRow({
       children: [
-        dataCell(sectionLabels[obs.section_key] ?? obs.section_key, 1600, fill),
-        dataCell(obs.action_text!, 3200, fill),
+        dataCell(sectionLabels[obs.section_key] ?? obs.section_key, 1646, fill),
+        dataCell(obs.action_text!, 3300, fill),
         riskCell(risk, 1000),
         dataCell(RISK_TIMEFRAMES[risk] ?? '—', 1760, fill),
-        dataCell('ASH / Contractor', 1800, fill),
+        dataCell('ASH / Contractor', 1200, fill),
       ],
     })
   })
@@ -461,16 +464,16 @@ function buildActionsSummary(observations: ReportObservation[], sectionLabels: R
       children: [t('The following table consolidates all required actions identified during this inspection, together with recommended response timeframes and responsibility.', { size: 20 })],
     }),
     new Table({
-      width: { size: 9360, type: WidthType.DXA },
-      columnWidths: [1600, 3200, 1000, 1760, 1800],
+      width: { size: 9906, type: WidthType.DXA },
+      columnWidths: [1646, 3300, 1000, 1760, 1200],
       rows: [
         new TableRow({
           children: [
-            headerCell('Area', 1600),
-            headerCell('Action Required', 3200),
+            headerCell('Area', 1646),
+            headerCell('Action Required', 3300),
             headerCell('Risk', 1000),
             headerCell('Response Timeframe', 1760),
-            headerCell('Responsibility', 1800),
+            headerCell('Responsibility', 1200),
           ],
         }),
         ...dataRows,
@@ -481,6 +484,11 @@ function buildActionsSummary(observations: ReportObservation[], sectionLabels: R
 }
 
 // ── Recurring items section ───────────────────────────────────────────────────
+// TODO [PRODUCTION]: Implement real recurring-items comparison.
+// The route should query the previous inspection's observations for this property,
+// find action_text items that still appear in the current inspection, and pass them
+// in as a parameter (e.g. recurringItems: ReportObservation[]).
+// Currently always renders the "no recurring items" placeholder row.
 function buildRecurringItems(): (Paragraph | Table)[] {
   const headerCell = (text: string, width: number) => new TableCell({
     borders: border(C.midGrey),
@@ -501,13 +509,13 @@ function buildRecurringItems(): (Paragraph | Table)[] {
       children: [t('The following items were also recorded in the previous inspection report and remain outstanding.', { size: 20 })],
     }),
     new Table({
-      width: { size: 9360, type: WidthType.DXA },
-      columnWidths: [2000, 5360, 2000],
+      width: { size: 9906, type: WidthType.DXA },
+      columnWidths: [2000, 5906, 2000],
       rows: [
         new TableRow({
           children: [
             headerCell('Area', 2000),
-            headerCell('Recurring Issue', 5360),
+            headerCell('Recurring Issue', 5906),
             headerCell('Previously Noted', 2000),
           ],
         }),
@@ -515,7 +523,7 @@ function buildRecurringItems(): (Paragraph | Table)[] {
           children: [
             new TableCell({
               borders: border(C.midGrey),
-              width: { size: 9360, type: WidthType.DXA },
+              width: { size: 9906, type: WidthType.DXA },
               columnSpan: 3,
               margins: { top: 60, bottom: 60, left: 140, right: 140 },
               children: [new Paragraph({
@@ -531,7 +539,7 @@ function buildRecurringItems(): (Paragraph | Table)[] {
 }
 
 // ── Inspector declaration table ───────────────────────────────────────────────
-function buildDeclaration(inspectorName: string, inspectionDate: string, reportGeneratedAt: string): (Paragraph | Table)[] {
+function buildDeclaration(inspectorName: string, inspectorTitle: string, inspectionDate: string, reportGeneratedAt: string): (Paragraph | Table)[] {
   const labelCell = (text: string) => new TableCell({
     borders: border(C.midGrey),
     width: { size: 2400, type: WidthType.DXA },
@@ -566,7 +574,7 @@ function buildDeclaration(inspectorName: string, inspectionDate: string, reportG
       width: { size: 9906, type: WidthType.DXA },
       columnWidths: [2400, 7506],
       rows: [
-        new TableRow({ children: [labelCell('Inspector'), valueCell(`${inspectorName}, Senior Property Manager, ASH Chartered Surveyors`)] }),
+        new TableRow({ children: [labelCell('Inspector'), valueCell(`${inspectorName}, ${inspectorTitle}, ASH Chartered Surveyors`)] }),
         new TableRow({ children: [labelCell('RICS Regulation'), valueCell('ASH Chartered Surveyors is regulated by RICS')] }),
         new TableRow({ children: [labelCell('Inspection Date'), valueCell(inspectionDate)] }),
         new TableRow({ children: [labelCell('Report Generated'), valueCell(reportGeneratedAt)] }),
@@ -693,7 +701,7 @@ export async function buildReportDocx(data: ReportData): Promise<Buffer> {
   children.push(...buildRecurringItems())
 
   // ── Inspector declaration ─────────────────────────────────────────────────
-  children.push(...buildDeclaration(data.inspectorName, data.inspectionDate, data.reportGeneratedAt))
+  children.push(...buildDeclaration(data.inspectorName, data.inspectorTitle, data.inspectionDate, data.reportGeneratedAt))
 
   const doc = new Document({
     styles: {
