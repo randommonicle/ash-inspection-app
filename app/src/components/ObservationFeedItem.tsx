@@ -9,14 +9,18 @@ interface Props {
   onAppend?: () => void
   /** Highlight this card as the active append target */
   isAppendTarget?: boolean
+  /** Highlight this card as the one awaiting confidence confirmation */
+  isPendingConfirmation?: boolean
 }
 
-export function ObservationFeedItem({ observation, photos, onOverride, onAppend, isAppendTarget }: Props) {
+export function ObservationFeedItem({ observation, photos, onOverride, onAppend, isAppendTarget, isPendingConfirmation }: Props) {
   const obsPhotos = photos.filter(p => p.observation_id === observation.id)
 
   return (
     <div className={`bg-white rounded-xl border shadow-sm px-4 py-3 transition-all ${
-      isAppendTarget ? 'border-ash-mid ring-2 ring-ash-mid/30' : 'border-gray-100'
+      isPendingConfirmation ? 'border-amber-400 ring-2 ring-amber-200' :
+      isAppendTarget        ? 'border-ash-mid ring-2 ring-ash-mid/30' :
+      'border-gray-100'
     }`}>
       <div className="flex items-center gap-2 mb-1.5 flex-wrap">
         <span className="text-[11px] font-semibold text-ash-mid bg-ash-light px-2 py-0.5 rounded-full">

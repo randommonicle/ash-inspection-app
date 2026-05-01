@@ -315,11 +315,14 @@ export function ActiveInspectionScreen() {
         </div>
       </div>
 
-      {/* Low-confidence banner */}
+      {/* Low-confidence banner — refers to the amber-highlighted card in the feed below */}
       {pending && (
         <div className="bg-amber-50 border-b border-amber-200 px-4 py-3 flex-shrink-0">
-          <p className="text-amber-800 text-sm font-medium mb-2">
-            Not sure — classified as <span className="font-bold">{SECTION_LABELS[pending.suggestedSection]}</span>. Correct?
+          <p className="text-amber-800 text-sm font-medium">
+            Not sure about the last observation ↓
+          </p>
+          <p className="text-amber-700 text-xs mb-2">
+            Classified as <span className="font-bold">{SECTION_LABELS[pending.suggestedSection]}</span> — is that correct?
           </p>
           <div className="flex gap-2">
             <button
@@ -357,6 +360,7 @@ export function ActiveInspectionScreen() {
               : undefined
             }
             isAppendTarget={appendingToId === obs.id}
+            isPendingConfirmation={pending?.observationId === obs.id}
           />
         ))}
         {isTranscribing && (
