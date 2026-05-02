@@ -219,21 +219,24 @@ Run `grep -r "TODO \[PRODUCTION\]"` from the repo root to list them all at once.
       Replace `cors()` with `cors({ origin: ['https://app.ashproperty.co.uk'] })`
 
 - [ ] **Resend sender address** — `server/services/email.ts`
-      Verify `ashproperty.co.uk` in the Resend dashboard; change `from` to
-      `'ASH Inspection Reports <reports@ashproperty.co.uk>'` (or agreed address)
+      Domain `propertyappdev.co.uk` registered and Cloudflare DNS records added (2 May 2026).
+      Awaiting Resend verification. Once verified, change `from` to
+      `'ASH Property App <reports@propertyappdev.co.uk>'`
 
-- [ ] **Remove REPORT_TO_OVERRIDE** — `server/.env` + `server/services/email.ts`
-      Delete the env var so reports route to each inspector's own email
+- [ ] **Remove REPORT_TO_OVERRIDE** — Railway Variables + `server/services/email.ts`
+      Remove from Railway Variables once Resend verifies propertyappdev.co.uk.
+      Inspector emails in Supabase users table already updated to Proton addresses (2 May 2026):
+      Pete Birch → petebirchpm@proton.me, Ben Graham → ben240689@proton.me
 
 - [ ] **Report header email address** — `server/services/reportGenerator.ts`
       Replace `ben@ashproperty.co.uk` with the firm's general enquiries address
 
 - [ ] **`allowNavigation` IP whitelist** — `app/capacitor.config.ts`
-      Replace `192.168.1.108` with the production server domain
+      Replace `192.168.1.108` with `ash-inspection-app-production.up.railway.app`
 
-- [ ] **Server deployment** — currently runs locally; deploy to Railway or Render for
-      permanent HTTPS hosting so field tests don't need the work PC left on.
-      LibreOffice must be included in the server container for PDF generation to work in production.
+- [x] **Server deployment** — deployed to Railway 2 May 2026
+      URL: `https://ash-inspection-app-production.up.railway.app`
+      LibreOffice included in Dockerfile. All env vars set in Railway Variables dashboard.
 
 ---
 
@@ -282,9 +285,17 @@ These were agreed after the first field test with Pete Birch on 1 May 2026.
 
 ## Server management
 
-**Starting the server:**
+**Production server (Railway) — use this for all testing from 2 May 2026:**
+- URL: `https://ash-inspection-app-production.up.railway.app`
+- Health check: `https://ash-inspection-app-production.up.railway.app/health` → `{"ok":true}`
+- Logs: Railway dashboard → ash-inspection-app → Deployments → View logs
+- Env vars: Railway dashboard → ash-inspection-app → Variables
+- Redeploy: automatic on every `git push` to `main`
+- LibreOffice is included in the Docker container — PDF generation works in production
+
+**Local server (development only):**
 ```
-cd C:\Users\ben\ash-inspection-app\server
+cd C:\Users\bengr\OneDrive\Desktop\ash-inspection-app\server
 npm run dev
 ```
 
@@ -299,14 +310,8 @@ This kills port 3001 and restarts in one step. tsx watch spawns child processes 
 Stop-Process -Id (Get-NetTCPConnection -LocalPort 3001).OwningProcess -Force
 ```
 
-**Cloudflared tunnel** (field tests only):
-```
-cloudflared tunnel --url http://localhost:3001
-```
-- Installed at `C:\Windows\System32\cloudflared.exe` on the work PC
-- The tunnel URL changes every restart — update `app/.env.local` and rebuild the app each time
-- Leave the cloudflared window open all day — closing it drops the tunnel
-- Do NOT restart cloudflared unless necessary; restarting the server does not affect the tunnel
+**Cloudflared tunnel** — no longer needed for field tests now that Railway is live.
+Was used pre-deployment when server ran locally.
 
 ---
 
