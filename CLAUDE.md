@@ -487,9 +487,6 @@ When a section is marked N/A in the pre-report checklist for the first time on a
 **Scheduling view** (future)  
 Dashboard showing all properties with their projected next inspection dates in a calendar view. Useful once more properties are added.
 
-**Deepgram → server-side transcription** (security)  
-Move `POST /api/transcribe` to the server to remove the Deepgram key from the app bundle.
-
 **Inspector signature** (future)  
 Option A: stored signature image applied automatically. Option B: inspector signs on phone at report generation.
 
@@ -498,6 +495,45 @@ Inspector edits DOCX in Word if needed → re-uploads → server converts to PDF
 
 **iOS support** (future)  
 Requires macOS + Xcode + Apple Developer account. Not in scope until Android is proven in production.
+
+---
+
+## Future Roadmap — Fire Door & Safety Inspection Mode
+
+**Background:** Richard Smith (partner, direct line manager) handles fire door inspections, Building Safety Act compliance, and HSE matters. The idea is to extend the existing app to support a second inspection type for him rather than building a separate app. Half the logic is already present.
+
+### Why combine rather than separate
+- Auth, recording, transcription, photo upload, offline sync, and report pipeline are identical
+- Richard could cover PM inspections during sickness if he has a dual role
+- New property onboarding (see below) benefits from shared infrastructure
+- Single codebase to maintain, single Railway deployment
+
+### What would be new
+- **`inspection_type` field** on the `inspections` table (`pm | fire_door | property_survey`)
+- **`role` array** on users (`inspector | fire_inspector | admin`) — Richard gets `fire_inspector`, existing PMs keep `inspector`
+- **Theme system** — `useTheme()` hook driven by the logged-in user's primary role. Red backgrounds/accents for `fire_inspector`, existing navy for `inspector`. Shared layout components, only colours change.
+- **Section template abstraction** — `getTemplate(inspectionType)` returns the correct section config. Current 12-section PM walkthrough becomes one template; fire door sections are a separate config (per-door: unique door ID, pass/fail, defect categories — frame, leaf, intumescent seals, closer, signage, hold-open devices, etc.)
+- **AI classification prompts** — the `/api/classify` endpoint needs to know the inspection type so it routes narrations to the correct sections
+- **Fire door report template** — separate Word template with door-by-door schedule, remediation timescales (immediate / 24hr / 28 days), statutory references (Regulatory Reform (Fire Safety) Order 2005, BS 9999, BS 8214, Building Safety Act 2022), responsible person sign-off block
+
+### New property onboarding mode
+A lightweight third inspection type (`property_survey`) where Richard (or any inspector) walks a new building and records its attributes — number of floors, lift present, car park, fire door count, accessibility features, etc. Output populates the Supabase `properties` record and generates a property data sheet for distribution to PMs. No major new logic needed; just a different section template and report format.
+
+### Recommended implementation order (when the time comes)
+1. Add `inspection_type` to `inspections` table and `role[]` to `users` table in Supabase
+2. Abstract section definitions into `app/src/config/templates/` — `pm.ts`, `fire_door.ts`, `property_survey.ts`
+3. Add `useTheme()` context and thread it through shared components
+4. Update `/api/classify` to accept and use `inspection_type`
+5. Add fire door report template to `server/services/reportGenerator.ts`
+6. Add Richard's account in Supabase with `role: ['fire_inspector']`
+
+### Statutory requirements to factor into the fire door template
+- **Regulatory Reform (Fire Safety) Order 2005** — responsible person must ensure fire doors are maintained
+- **Building Safety Act 2022** — heightened requirements for higher-risk buildings (18m+ or 7+ storeys)
+- **BS 9999:2017** — fire safety in the design of buildings
+- **BS 8214:2016** — timber-based fire door assemblies
+- **BS EN 1634** — fire resistance and smoke control testing
+- Each defect needs a remediation priority: **Immediate** (door non-functional), **24 hours** (significant compromise), **28 days** (minor defects)
 
 ---
 
