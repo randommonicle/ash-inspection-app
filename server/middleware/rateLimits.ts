@@ -54,3 +54,17 @@ export const reportLimiter = rateLimit({
   legacyHeaders:   false,
   message:         tooMany,
 })
+
+/**
+ * Transcribe audio — called once per voice recording.
+ * Each Deepgram call costs ~$0.0043/minute. An inspector doing 3 obs/minute
+ * (60-sec recordings each) = ~180 calls/hour absolute max. 120 per 5 minutes
+ * (24/min) is more than enough for burst use while blocking abuse.
+ */
+export const transcribeLimiter = rateLimit({
+  windowMs:      5 * 60 * 1000,
+  max:           120,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message:         tooMany,
+})

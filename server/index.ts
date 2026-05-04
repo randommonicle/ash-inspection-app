@@ -5,6 +5,7 @@ import cors from 'cors'
 import classifyRouter from './routes/classify'
 import analysePhotoRouter from './routes/analysePhoto'
 import generateReportRouter from './routes/generateReport'
+import transcribeRouter from './routes/transcribe'
 import { globalLimiter } from './middleware/rateLimits'
 
 const app  = express()
@@ -19,6 +20,12 @@ app.set('trust proxy', 1)
 //   app.use(cors({ origin: ['https://ash-inspection-app-production.up.railway.app'] }))
 // Wildcard is acceptable during development but tighten before public launch.
 app.use(cors())
+
+// IMPORTANT: /api/transcribe MUST be mounted before express.json() because it
+// accepts a raw binary audio body. express.json() would reject the audio blob
+// (wrong Content-Type) or corrupt it. The route handles its own body parsing
+// via express.raw() internally.
+app.use('/api/transcribe', transcribeRouter)
 
 // Hard cap on request body size — prevents oversized payloads from being parsed.
 // All our endpoints expect small JSON bodies (IDs and short text); 50 kb is generous.
