@@ -43,7 +43,7 @@ Reports match the existing ASH template exactly. The AI cleans up voice narratio
 | **Resend** | Transactional email | From: `reports@propertyappdev.co.uk` |
 | **Cloudflare** | DNS for `propertyappdev.co.uk` | Free tier |
 | **123-reg** | Domain registrar for `propertyappdev.co.uk` | DNS delegated to Cloudflare |
-| **Deepgram** | Speech-to-text transcription | Called directly from the app (security debt — see TODO list) |
+| **Deepgram** | Speech-to-text transcription | Called from the server (`POST /api/transcribe`) |
 | **Anthropic** | AI (classification, summarisation, image analysis) | Called from the server only |
 | **Open-Meteo** | Historical weather data | Free, no API key |
 | **Nominatim** | Address geocoding (for weather lookup) | Free, OpenStreetMap, no API key |
@@ -73,7 +73,7 @@ Same keys as above, minus `REPORT_TO_OVERRIDE` once that's removed.
 VITE_SUPABASE_URL=...
 VITE_SUPABASE_ANON_KEY=...       # Anon key — safe to expose, RLS enforces access
 VITE_API_BASE_URL=https://ash-inspection-app-production.up.railway.app
-VITE_DEEPGRAM_API_KEY=...        # TODO: move to server (see security TODOs)
+# VITE_DEEPGRAM_API_KEY — REMOVED. Transcription now goes via POST /api/transcribe (server holds DEEPGRAM_API_KEY)
 ```
 
 ---
@@ -147,7 +147,7 @@ ash-inspection-app/
 │   │   ├── services/
 │   │   │   ├── sync.ts               # Background sync queue (SQLite → Supabase + photo upload)
 │   │   │   ├── classify.ts           # Calls POST /api/classify
-│   │   │   ├── transcription.ts      # Calls Deepgram directly (TODO: move to server)
+│   │   │   ├── transcription.ts      # Calls POST /api/transcribe (server proxies to Deepgram)
 │   │   │   ├── report.ts             # Calls POST /api/generate-report
 │   │   │   └── supabase.ts           # Supabase client (anon key)
 │   │   ├── db/
@@ -214,7 +214,7 @@ Opus is expensive — it's only justified for image analysis where visual unders
 
 ### 3. Server holds all secrets
 - Anthropic, Resend, Supabase service role key — server-side only
-- Deepgram is currently called directly from the frontend (known security debt — see TODO list)
+- Deepgram is called via the server (`POST /api/transcribe`) — the API key never reaches the frontend
 - The app's Supabase client uses the **anon key** only — RLS enforces data access
 
 ### 4. Sections are the core data model
@@ -365,8 +365,8 @@ Search for `// TODO [PRODUCTION]:` in the codebase to find all flagged items.
 - [x] **Ownership check on photo analysis** — `server/routes/analysePhoto.ts` (May 2026)  
   Verifies the photo's inspection belongs to the requesting user before running Opus. Returns 403 otherwise.
 
-- [ ] **Deepgram key in frontend bundle** — `app/src/services/transcription.ts`  
-  Move to `POST /api/transcribe` backend route. Add `DEEPGRAM_API_KEY` to server env. Remove `VITE_DEEPGRAM_API_KEY` from `app/.env.local`. Until then, the Deepgram key is exposed in the compiled JS.
+- [x] **Deepgram key in frontend bundle** — `server/routes/transcribe.ts` (May 2026)  
+  Moved to `POST /api/transcribe`. Server holds `DEEPGRAM_API_KEY`. App calls its own backend with a Supabase Bearer token. `VITE_DEEPGRAM_API_KEY` removed from `app/.env.local`. Key is no longer in the APK bundle.
 
 - [ ] **CORS wildcard** — `server/index.ts`  
   Replace `cors()` with `cors({ origin: ['https://app.ashproperty.co.uk'] })` before exposing the server to the public internet.

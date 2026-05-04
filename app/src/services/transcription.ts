@@ -1,42 +1,48 @@
-// Deepgram Nova-3 batch transcription (REST API)
-// Called directly from the app after each recording.
+// Deepgram Nova-3 batch transcription — routed via the ASH backend server.
 //
-// TODO [PRODUCTION]: Move transcription to the backend server to keep the
-// Deepgram API key out of the frontend bundle (currently exposed in the APK).
-// Add a POST /api/transcribe route that accepts the audio blob, calls Deepgram
-// server-side, and returns the transcript. Remove VITE_DEEPGRAM_API_KEY from
-// app/.env.local and add DEEPGRAM_API_KEY to server/.env instead.
+// The server holds DEEPGRAM_API_KEY so it never appears in the APK bundle.
+// The app sends the raw audio blob to POST /api/transcribe and receives
+// { transcript: string } back.
+//
+// WHY xhrFetch?
+//   CapacitorHttp patches window.fetch on Android. For binary blob uploads
+//   its Promises never resolve, causing transcription to hang silently.
+//   xhrFetch uses XHR directly which is unpatched and handles binary bodies.
 
 import { xhrFetch } from './supabase'
+import { supabase } from './supabase'
 
-const DEEPGRAM_URL = 'https://api.deepgram.com/v1/listen'
+const API_BASE = import.meta.env.VITE_API_BASE_URL as string
 
 export async function transcribeAudio(audioBlob: Blob): Promise<string> {
-  const params = new URLSearchParams({
-    model:        'nova-3',
-    language:     'en-GB',
-    punctuate:    'true',
-    smart_format: 'true',
-  })
+  if (!API_BASE) {
+    throw new Error('VITE_API_BASE_URL is not set — cannot reach transcription server')
+  }
 
-  // Use xhrFetch instead of fetch — CapacitorHttp patches window.fetch on Android
-  // and its Promises never resolve, causing the transcription to hang silently.
-  const response = await xhrFetch(`${DEEPGRAM_URL}?${params}`, {
+  // Retrieve the current Supabase session token for authentication.
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session?.access_token) {
+    throw new Error('Not authenticated — please log in again')
+  }
+
+  // Use xhrFetch — not fetch — to avoid CapacitorHttp's patched window.fetch
+  // hanging on binary blob uploads (see supabase.ts for full explanation).
+  const response = await xhrFetch(`${API_BASE}/api/transcribe`, {
     method: 'POST',
     headers: {
-      Authorization:  `Token ${import.meta.env.VITE_DEEPGRAM_API_KEY}`,
-      'Content-Type': audioBlob.type || 'audio/webm',
+      // Pass the audio MIME type so the server can forward it to Deepgram.
+      // MediaRecorder produces audio/webm;codecs=opus, audio/webm, or audio/ogg.
+      'Content-Type':  audioBlob.type || 'audio/webm',
+      'Authorization': `Bearer ${session.access_token}`,
     },
     body: audioBlob,
   })
 
   if (!response.ok) {
     const text = await response.text().catch(() => '')
-    throw new Error(`Deepgram ${response.status}: ${text}`)
+    throw new Error(`Transcribe API ${response.status}: ${text}`)
   }
 
-  const data = await response.json()
-  const transcript: string =
-    data?.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? ''
-  return transcript.trim()
+  const data = await response.json() as { transcript?: string }
+  return (data.transcript ?? '').trim()
 }
