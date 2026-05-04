@@ -8,6 +8,8 @@ import { buildReportDocx, type ReportObservation, type ReportPhoto, type Recurri
 import { sendReportEmail } from '../services/email'
 import { convertDocxToPdf } from '../services/pdf'
 import { getWeatherForInspection } from '../services/weather'
+import { requireAuth } from '../middleware/auth'
+import { reportLimiter } from '../middleware/rateLimits'
 
 const router  = Router()
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -145,15 +147,15 @@ async function generateSummary(observations: ReportObservation[]): Promise<strin
   return summary
 }
 
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response) => {
   const { inspection_id } = req.body as { inspection_id?: string }
 
-  if (!inspection_id) {
+  if (!inspection_id || typeof inspection_id !== 'string') {
     res.status(400).json({ error: 'inspection_id is required' })
     return
   }
 
-  console.log(`[REPORT] Report generation requested for inspection ${inspection_id}`)
+  console.log(`[REPORT] User ${req.userId} requested report for inspection ${inspection_id}`)
 
   try {
     // ── 1. Fetch inspection, inspector, and property details ──────────────────
@@ -166,6 +168,14 @@ router.post('/', async (req: Request, res: Response) => {
     if (inspErr || !inspection) {
       console.error('[REPORT] Inspection not found:', inspErr?.message)
       res.status(404).json({ error: 'Inspection not found' })
+      return
+    }
+
+    // Ownership check — only the inspector who conducted the inspection can
+    // generate its report. This prevents cross-user data access and cost abuse.
+    if (inspection.inspector_id !== req.userId) {
+      console.warn(`[REPORT] User ${req.userId} attempted to generate report for inspection owned by ${inspection.inspector_id}`)
+      res.status(403).json({ error: 'Forbidden — this inspection belongs to another inspector' })
       return
     }
 

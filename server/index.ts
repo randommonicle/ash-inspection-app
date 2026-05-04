@@ -5,16 +5,27 @@ import cors from 'cors'
 import classifyRouter from './routes/classify'
 import analysePhotoRouter from './routes/analysePhoto'
 import generateReportRouter from './routes/generateReport'
+import { globalLimiter } from './middleware/rateLimits'
 
 const app  = express()
 const port = process.env.PORT ?? 3001
 
+// Trust the Railway / reverse-proxy X-Forwarded-For header so rate limiting
+// and logging use the real client IP rather than the proxy's IP.
+app.set('trust proxy', 1)
+
 // TODO [PRODUCTION]: Replace the wildcard CORS origin with the specific
 // domain(s) the app will be served from, e.g.:
-//   app.use(cors({ origin: ['https://app.ashproperty.co.uk'] }))
-// Wildcard is acceptable during local / tunnel testing but must not go live.
+//   app.use(cors({ origin: ['https://ash-inspection-app-production.up.railway.app'] }))
+// Wildcard is acceptable during development but tighten before public launch.
 app.use(cors())
-app.use(express.json())
+
+// Hard cap on request body size — prevents oversized payloads from being parsed.
+// All our endpoints expect small JSON bodies (IDs and short text); 50 kb is generous.
+app.use(express.json({ limit: '50kb' }))
+
+// Apply global rate limit to every route before any other middleware.
+app.use(globalLimiter)
 
 // Request logger — logs every inbound request with method, path, and response time
 app.use((req: Request, res: Response, next: NextFunction) => {

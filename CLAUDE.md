@@ -350,6 +350,21 @@ After recording, the indicator reverts to normal. Inspector uses the back button
 
 Search for `// TODO [PRODUCTION]:` in the codebase to find all flagged items.
 
+- [x] **JWT authentication on all server routes** — `server/middleware/auth.ts` (May 2026)  
+  All three routes now require a valid Supabase JWT in `Authorization: Bearer <token>`. App sends the token via `app/src/services/apiClient.ts`. Anonymous callers receive 401.
+
+- [x] **Rate limiting** — `server/middleware/rateLimits.ts` (May 2026)  
+  Global: 200 req/15 min/IP. Classify: 30/min. Photo analysis: 80/10 min. Report generation: 10/hour. Uses `express-rate-limit`. Returns 429 with JSON body.
+
+- [x] **Request body size cap** — `server/index.ts` (May 2026)  
+  `express.json({ limit: '50kb' })` — prevents oversized payloads before they reach route handlers.
+
+- [x] **Ownership check on report generation** — `server/routes/generateReport.ts` (May 2026)  
+  Verifies `inspection.inspector_id === req.userId`. Inspectors can only generate reports for their own inspections. Returns 403 otherwise.
+
+- [x] **Ownership check on photo analysis** — `server/routes/analysePhoto.ts` (May 2026)  
+  Verifies the photo's inspection belongs to the requesting user before running Opus. Returns 403 otherwise.
+
 - [ ] **Deepgram key in frontend bundle** — `app/src/services/transcription.ts`  
   Move to `POST /api/transcribe` backend route. Add `DEEPGRAM_API_KEY` to server env. Remove `VITE_DEEPGRAM_API_KEY` from `app/.env.local`. Until then, the Deepgram key is exposed in the compiled JS.
 

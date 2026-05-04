@@ -1,4 +1,5 @@
 import type { SectionKey } from '../types'
+import { authHeaders } from './apiClient'
 
 export interface ClassifyResult {
   section_key: SectionKey
@@ -19,7 +20,7 @@ export async function classifyNarration(narration: string): Promise<ClassifyResu
 
   const res = await fetch(`${base}/api/classify`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authHeaders(),
     body:    JSON.stringify({ narration }),
   })
 

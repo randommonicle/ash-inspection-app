@@ -1,5 +1,6 @@
 import { Filesystem } from '@capacitor/filesystem'
 import { supabase } from './supabase'
+import { authHeaders } from './apiClient'
 import {
   getUnsyncedCompletedInspections,
   getObservationsForInspection,
@@ -18,7 +19,7 @@ async function triggerOpusAnalysis(photoId: string, storagePath: string): Promis
   console.log(`[SYNC] Triggering Opus analysis for photo ${photoId}`)
   const res = await fetch(`${API_BASE}/api/analyse-photo`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authHeaders(),
     body:    JSON.stringify({ photo_id: photoId, storage_path: storagePath }),
   })
   if (!res.ok) {

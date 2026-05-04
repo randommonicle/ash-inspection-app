@@ -1,3 +1,5 @@
+import { authHeaders } from './apiClient'
+
 const base = import.meta.env.VITE_API_BASE_URL as string
 
 export async function generateReport(inspectionId: string): Promise<void> {
@@ -5,7 +7,7 @@ export async function generateReport(inspectionId: string): Promise<void> {
 
   const res = await fetch(`${base}/api/generate-report`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await authHeaders(),
     body:    JSON.stringify({ inspection_id: inspectionId }),
   })
 
