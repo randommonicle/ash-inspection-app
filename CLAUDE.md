@@ -1,110 +1,335 @@
-# ASH Inspection App — Claude Code Guide
+# ASH Inspection App — Developer Guide
+
+**Last updated:** May 2026  
+**Author:** Ben Graham, ASH Chartered Surveyors  
+**Purpose:** This document is the single source of truth for anyone (human or AI) picking up this codebase. It covers setup, architecture, lessons learned, known issues, and future work. If Ben is unavailable, this document should be sufficient to continue development.
 
 ---
 
-## ⚡ START HERE — READ THIS FIRST EVERY SESSION
+## ⚡ READ THIS FIRST — EVERY SESSION
 
-**Step 1:** Ask the user — "Are you on your home computer or work computer?"
+**Step 1:** Are you on the **home computer** or **work computer**?  
+**Step 2:** Are you doing **development** or preparing for a **field test**?
 
-**Step 2:** Ask — "Are you preparing for a live field test today, or doing development work?"
-
-Then follow the relevant checklist below before touching any code.
-
----
-
-## 🏢 Work computer — live field test day (Cloudflare tunnel required)
-
-This is the setup needed when the app will be used over mobile data (not on the office WiFi).
-
-**Do this before leaving the office:**
-
-1. Open a terminal in `[work path]\ash-inspection-app\server`
-2. Run `npm run dev` — keep this terminal open all day
-3. Open a second terminal and run: `cloudflared tunnel --url http://localhost:3001`
-4. Copy the generated `https://xxxx-xxxx-xxxx.trycloudflare.com` URL
-5. Open `app/.env.local` and update: `VITE_API_BASE_URL=https://xxxx-xxxx-xxxx.trycloudflare.com`
-6. In the app terminal: `npm run build` then `npx cap sync android`
-7. Install on all test devices via Android Studio (Run button)
-8. Verify the server is reachable: open `https://xxxx-xxxx-xxxx.trycloudflare.com/health` in a browser — should return `{"ok":true}`
-
-**Critical reminders:**
-- The tunnel URL changes every time `cloudflared` restarts — if you restart it, repeat steps 4–7
-- Your work PC must stay awake and the two terminals must stay open while out in the field
-- If classification shows errors in the app, the tunnel has likely dropped — check the server terminal
-
-**Email routing during testing:**
-- All reports currently route to `ben.graham240689@gmail.com` via `REPORT_TO_OVERRIDE` in `server/.env`
-- Pete's reports will also come to Ben's Gmail — this is intentional for now
+Then jump to the relevant section below before touching any code.
 
 ---
 
-## 🏢 Work computer — development only (same WiFi as phone)
+## What This App Does
 
-1. Start server: `npm run dev` in `server/`
-2. Start frontend: `npm run dev` in `app/`
-3. Check `app/.env.local` → `VITE_API_BASE_URL` points to the work PC's local IP
-4. USB or WiFi debug via Android Studio
+ASH Chartered Surveyors (Cheltenham) inspect residential blocks monthly. Previously this was paper-based. This app replaces that process:
+
+1. **Inspector opens the app** on their Android phone, selects a property
+2. **Records voice narrations** for each area of the building — app transcribes and classifies them automatically into the correct report section
+3. **Takes photos** — automatically linked to the last observation, analysed by AI, captioned
+4. **Completes inspection** — data syncs to the cloud in the background
+5. **Generates report** — one tap produces a branded Word document + PDF, emailed to the inspector
+
+Reports match the existing ASH template exactly. The AI cleans up voice narrations into professional prose, assigns risk levels, flags recurring issues from the previous inspection, auto-fills weather from a free weather API, and sets a projected next inspection date.
+
+**Current users:**  
+- Pete Birch (inspector) — petebirchpm@proton.me  
+- Ben Graham (developer/inspector) — ben240689@proton.me  
+- Both have accounts in Supabase `users` table with role `inspector`
 
 ---
 
-## 🏠 Home computer setup
+## Infrastructure Overview
 
-**Backend server**
-- Working directory: `C:\Users\bengr\OneDrive\Desktop\ash-inspection-app\server`
-- Start: `npm run dev` (leave this terminal open)
-- Runs on: `http://localhost:3001`
-- Env file: `server/.env` — contains all API keys (never committed)
+| Service | Purpose | URL / Location |
+|---------|---------|----------------|
+| **Railway** | Production server (Express + LibreOffice) | `https://ash-inspection-app-production.up.railway.app` |
+| **Supabase** | Database, auth, file storage | Project: `ash-inspection-app` |
+| **Resend** | Transactional email | From: `reports@propertyappdev.co.uk` |
+| **Cloudflare** | DNS for `propertyappdev.co.uk` | Free tier |
+| **123-reg** | Domain registrar for `propertyappdev.co.uk` | DNS delegated to Cloudflare |
+| **Deepgram** | Speech-to-text transcription | Called directly from the app (security debt — see TODO list) |
+| **Anthropic** | AI (classification, summarisation, image analysis) | Called from the server only |
+| **Open-Meteo** | Historical weather data | Free, no API key |
+| **Nominatim** | Address geocoding (for weather lookup) | Free, OpenStreetMap, no API key |
+| **GitHub** | Source control | https://github.com/randommonicle/ash-inspection-app |
 
-**Frontend dev server**
-- Working directory: `C:\Users\bengr\OneDrive\Desktop\ash-inspection-app\app`
-- Start: `npm run dev` (leave this terminal open)
-- Runs on: `http://localhost:5173`
+**Railway auto-deploys on every `git push` to `main`.** No manual deploy step needed.
 
-**API base URL**
-- `app/.env.local` → `VITE_API_BASE_URL=http://192.168.1.108:3001`
-- 192.168.1.108 is the home PC's local IP — verify with `ipconfig` if the phone can't reach the server
-- If the IP has changed: update `app/.env.local`, then rebuild and reinstall the app
+---
 
-**Android device testing**
+## Environment Variables
+
+### `server/.env` (local dev — never committed)
+```
+ANTHROPIC_API_KEY=...
+SUPABASE_URL=...
+SUPABASE_SERVICE_ROLE_KEY=...    # Service role — bypasses RLS, server-side only
+DEEPGRAM_API_KEY=...
+RESEND_API_KEY=...
+REPORT_TO_OVERRIDE=...           # REMOVE IN PRODUCTION — forces all emails to one address
+```
+
+### Railway Variables (production — set in Railway dashboard)
+Same keys as above, minus `REPORT_TO_OVERRIDE` once that's removed.
+
+### `app/.env.local` (never committed)
+```
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_ANON_KEY=...       # Anon key — safe to expose, RLS enforces access
+VITE_API_BASE_URL=https://ash-inspection-app-production.up.railway.app
+VITE_DEEPGRAM_API_KEY=...        # TODO: move to server (see security TODOs)
+```
+
+---
+
+## Home Computer Setup (Ben's personal machine)
+
+**Path:** `C:\Users\bengr\OneDrive\Desktop\ash-inspection-app\`
+
+### Running the server locally
+```
+cd C:\Users\bengr\OneDrive\Desktop\ash-inspection-app\server
+npm run dev
+```
+Runs on `http://localhost:3001`. Keep this terminal open.
+
+> ⚠️ **tsx watch + external editors**: tsx watch sometimes fails to detect saves made by Claude Code or other external editors. If server-side changes aren't reflected in the logs, **manually restart** with Ctrl+C → `npm run dev`.
+
+> **Port stuck after crash?** Run `npm run restart` (kills port 3001 and restarts). If that fails:  
+> `Stop-Process -Id (Get-NetTCPConnection -LocalPort 3001).OwningProcess -Force`
+
+### Running the frontend dev server
+```
+cd C:\Users\bengr\OneDrive\Desktop\ash-inspection-app\app
+npm run dev
+```
+Runs on `http://localhost:5173`.
+
+### Testing on Android device (home)
 - Phone and PC must be on the same WiFi
-- Kaspersky VPN and Firewall must be disabled for WiFi debugging
-- Open Android Studio → device appears in Running Devices panel
+- Kaspersky VPN and Firewall must be **disabled** for WiFi debugging
 - After any code change: `npm run build` → `npx cap sync android` → Run in Android Studio
-- The app must be rebuilt and reinstalled for any frontend or `.env.local` changes to take effect
+- If the local IP has changed (`ipconfig` to check), update `VITE_API_BASE_URL` in `app/.env.local` and rebuild
+
+> **LibreOffice** — required for PDF generation. NOT installed on the home PC by default.  
+> If testing PDF generation at home: install from https://www.libreoffice.org/download/libreoffice-still/  
+> Without it, the server still generates and emails the DOCX but silently skips the PDF.
 
 ---
 
-## Key things to remember
+## Work Computer Setup
 
-- **Both terminal windows must stay open** — closing either stops the server or frontend
-- **Rebuild required** after any `.env.local` or frontend source file change before testing on device
-- **Server hot-reloads** on TypeScript file changes (tsx watch) — but **does not reload on .env changes** — restart manually if you edit .env
-- **tsx watch + external editors**: tsx watch sometimes fails to detect saves made by Claude Code or other external tools. If you add server-side code and the `[REPORT]` / `[RECURRING]` console logs don't appear, **manually restart the server** (Ctrl+C → `npm run dev`)
-- **API keys** live in `server/.env` and `app/.env.local` — neither is committed to git
-- **Model routing is a hard rule**: image analysis = `claude-opus-4-6`, everything else = `claude-sonnet-4-6`. Only defined in `server/config/models.ts` — never hardcode model names elsewhere
-- **iOS not supported yet** — testing is Android only. iOS requires macOS + Xcode + Apple Developer account
-- **LibreOffice required for PDF generation** — installed on the work PC. NOT yet installed on Ben's home PC — if testing at home over a weekend, install from https://www.libreoffice.org/download/libreoffice-still/ before running the server. Without it the server will still generate and email the DOCX but will skip the PDF.
+### Development only (same WiFi as phone)
+1. Start server: `npm run dev` in `server/`
+2. Confirm `VITE_API_BASE_URL` in `app/.env.local` points to the work PC's local IP
+3. USB or WiFi debug via Android Studio
+
+### Field test (production server — from 2 May 2026)
+The app now points at Railway in production. **No Cloudflare tunnel needed.**
+- Ensure `VITE_API_BASE_URL=https://ash-inspection-app-production.up.railway.app` in `app/.env.local`
+- Build and install the app, take the phone and go
+
+> The old Cloudflare tunnel setup (`cloudflared tunnel --url http://localhost:3001`) is obsolete now that Railway is live. Ignore any references to it in older notes.
 
 ---
 
-## Build phases
+## Project Structure
+
+```
+ash-inspection-app/
+├── app/                              # React + TypeScript + Capacitor frontend
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── RecordButton.tsx       # Tap-to-start/stop recorder with cancel + camera slots
+│   │   │   ├── ObservationFeedItem.tsx # Single observation card in the feed
+│   │   │   ├── SectionPicker.tsx      # Modal for manually overriding a section
+│   │   │   └── PreReportChecklist.tsx # Pre-generation checklist modal (Phase 6)
+│   │   ├── screens/
+│   │   │   ├── ActiveInspectionScreen.tsx  # Main recording interface
+│   │   │   ├── PropertyDetailScreen.tsx    # Property info + inspection history + report trigger
+│   │   │   └── PropertyListScreen.tsx      # Property list from Supabase
+│   │   ├── services/
+│   │   │   ├── sync.ts               # Background sync queue (SQLite → Supabase + photo upload)
+│   │   │   ├── classify.ts           # Calls POST /api/classify
+│   │   │   ├── transcription.ts      # Calls Deepgram directly (TODO: move to server)
+│   │   │   ├── report.ts             # Calls POST /api/generate-report
+│   │   │   └── supabase.ts           # Supabase client (anon key)
+│   │   ├── db/
+│   │   │   └── database.ts           # All SQLite operations (inspections, observations, photos)
+│   │   ├── hooks/
+│   │   │   ├── useSync.ts            # Exposes sync status and triggerSync()
+│   │   │   └── useNetwork.ts         # Online/offline detection
+│   │   ├── contexts/
+│   │   │   └── AuthContext.tsx       # Supabase auth, profile loading, sign-out on cold start
+│   │   └── types/
+│   │       └── index.ts              # All shared types + SECTION_LABELS, SECTION_ORDER
+│   ├── android/                      # Capacitor Android project (do not edit manually)
+│   ├── capacitor.config.ts           # App ID, scheme, allowNavigation, allowMixedContent
+│   └── .env.local                    # API keys — never committed
+│
+├── server/                           # Node.js + Express + TypeScript backend
+│   ├── index.ts                      # Express app entry point, middleware, route mounting
+│   ├── Dockerfile                    # Railway deployment — includes LibreOffice
+│   ├── routes/
+│   │   ├── classify.ts               # POST /api/classify — AI section classification
+│   │   ├── analysePhoto.ts           # POST /api/analyse-photo — Opus image analysis
+│   │   └── generateReport.ts         # POST /api/generate-report — full pipeline
+│   ├── services/
+│   │   ├── reportGenerator.ts        # Builds the Word document (docx library)
+│   │   ├── email.ts                  # Sends report via Resend
+│   │   ├── pdf.ts                    # DOCX → PDF via LibreOffice CLI
+│   │   ├── weather.ts                # Geocode + Open-Meteo historical weather lookup
+│   │   ├── anthropic.ts              # Opus image analysis wrapper
+│   │   └── supabase.ts               # Supabase client (service role key)
+│   ├── prompts/
+│   │   ├── classify.ts               # System prompt for section classification
+│   │   ├── analyseImage.ts           # System prompt for Opus photo analysis
+│   │   ├── processObservation.ts     # System prompt for narration → professional text
+│   │   └── generateSummary.ts        # System prompt for overall condition summary
+│   └── config/
+│       └── models.ts                 # SINGLE SOURCE OF TRUTH for AI model names
+│
+└── supabase/
+    └── migrations/                   # Run in order — check numbering before adding new ones
+```
+
+---
+
+## Architecture: Key Rules
+
+### 1. Model routing is a hard rule
+**Defined only in `server/config/models.ts`. Never hardcode model names anywhere else.**
+
+| Use case | Model |
+|----------|-------|
+| Photo / image analysis | `claude-opus-4-6` |
+| Section classification | `claude-sonnet-4-6` |
+| Observation processing | `claude-sonnet-4-6` |
+| Overall summary | `claude-sonnet-4-6` |
+| Recurring item comparison | `claude-sonnet-4-6` |
+
+Opus is expensive — it's only justified for image analysis where visual understanding matters. All text tasks use Sonnet.
+
+### 2. Offline-first
+- All inspection data is written to SQLite first, regardless of network status
+- Sync to Supabase happens after inspection completion, in the background
+- If sync fails, data is not lost — it retries on next trigger
+- **Generate Report** is only available after the inspection is synced (Supabase has the data the server needs)
+
+### 3. Server holds all secrets
+- Anthropic, Resend, Supabase service role key — server-side only
+- Deepgram is currently called directly from the frontend (known security debt — see TODO list)
+- The app's Supabase client uses the **anon key** only — RLS enforces data access
+
+### 4. Sections are the core data model
+There are 12 fixed sections defined in `app/src/types/index.ts`:
+```
+external_approach → grounds → bin_store → car_park → external_fabric → roof →
+communal_entrance → stairwells → lifts → plant_room → internal_communal → additional
+```
+Every observation has a `section_key`. The report generator uses this to group content. Sections gated by property flags (`has_car_park`, `has_lift`, `has_roof_access`) are omitted from the report automatically.
+
+---
+
+## Feature Deep-Dives
+
+### Recording flow
+- **Tap-to-start / tap-to-stop** model (not hold-to-record — inspectors need both hands)
+- Max 60 seconds per recording
+- Cancel × appears to the LEFT while recording; camera button stays visible on the RIGHT
+- After transcription, AI classifies the narration into the correct section
+- **Low confidence** → amber banner with the suggested section, user confirms or overrides
+- **High confidence** → auto-saved with no prompt
+- **Add more** → appends to the previous observation's narration, re-classifies, updates in-place
+
+### AI classification confidence
+`app/src/services/classify.ts` → `POST /api/classify`  
+Returns `{ section_key, confidence: 'high'|'low', split_required, split_at? }`  
+- If `split_required`, the transcript is split at `split_at` character index and each half classified separately
+- Falls back to `additional` section on any error — the inspection always continues
+
+### Sync flow
+`app/src/services/sync.ts`  
+1. `triggerSync()` called after `completeInspection()`
+2. For each unsynced completed inspection:
+   - Upsert inspection row to Supabase
+   - Upsert all observations
+   - Upload each photo to Supabase Storage (`inspection-files` bucket)
+   - After each upload, call `POST /api/analyse-photo` → Opus analyses the image → saves `opus_description` JSON to `photos` table
+3. Mark inspection `synced=1` in SQLite
+
+**Supabase Storage RLS** — `inspection-files` bucket needs:
+- `INSERT` policy for authenticated users (app uploads)
+- `SELECT` policy for authenticated users (server downloads for Opus + report)
+- If photos fail to upload with "violates row-level security" → check Supabase → Storage → Policies
+
+### Report generation pipeline
+`server/routes/generateReport.ts`  
+POST `/api/generate-report` with `{ inspection_id }`
+
+1. Fetch inspection + property (flags, address, units) + inspector (name, email, job_title) from Supabase
+2. Fetch all observations; process unprocessed ones through Sonnet (raw narration → professional text + action + risk level). Saves back to Supabase so regeneration is fast.
+3. Find most recent previous inspection; ask Sonnet which previous actions are still outstanding → "Recurring Items" table
+4. **Concurrently:** generate overall summary (Sonnet) + fetch weather (Open-Meteo)
+5. Compute projected next inspection (inspection date + 1 calendar month)
+6. Download all photos from Supabase Storage; run late Opus analysis on any photo that was missed during sync
+7. Build Word document (`server/services/reportGenerator.ts`)
+8. Upload `report.docx` to Supabase Storage
+9. Update inspection `status → 'report_generated'`
+10. Convert DOCX → PDF via LibreOffice (`server/services/pdf.ts`) — non-fatal if LibreOffice absent
+11. Send email via Resend with both files attached
+
+### Weather auto-fill
+`server/services/weather.ts`  
+- Geocodes property address via **Nominatim** (free, OpenStreetMap, no API key)
+  - Must include a `User-Agent` header per Nominatim's terms
+- Fetches hourly weather via **Open-Meteo** for the inspection date and local UK hour
+  - Tries the forecast API first (covers past 14 days, no delay)
+  - Falls back to ERA5 archive API (covers any historical date, ~5-day lag for recent data)
+- Uses `start_hour` / `end_hour` parameters to fetch a single hour rather than a full day
+- Converts UTC start_time to UK local time (handles BST/GMT correctly via `toLocaleString` with `timeZone: 'Europe/London'`)
+- Returns a string like `"14°C, Partly cloudy, Light wind (12 km/h)"` or `null` on any failure
+- Failure is always non-fatal — the report field shows `—` instead
+
+### Pre-report checklist
+`app/src/components/PreReportChecklist.tsx`  
+Shown when "Generate Report" or "Regenerate Report" is tapped.
+- Shows all 12 sections: ✓ green (has observations), ! amber (no observations), — grey (N/A)
+- Sections with no observations show two buttons: **Edit** (returns to inspection screen with that section pre-selected) and **N/A** (marks it intentionally skipped)
+- **Auto-N/A** on open: `car_park` if `has_car_park=false`, `additional` always (it's optional)
+- **Lifts are NOT auto-N/A** even if `has_lift=false` — safety-critical, inspector must explicitly confirm
+- "Generate Report →" button disabled until all sections are green or N/A
+- N/A markings are session-only — not persisted. Sections with no observations simply don't appear in the report body.
+
+**Edit section → jump back to inspection:**  
+`PropertyDetailScreen` navigates to `/inspection/{id}` with `location.state.jumpToSection = sectionKey`.  
+`ActiveInspectionScreen` reads `jumpToSection` from location state, pre-sets `currentSection`, and shows an amber indicator: *"⚠ Add observation for: [Section Name]"*.  
+After recording, the indicator reverts to normal. Inspector uses the back button to return.
+
+### Photo appendix
+`server/services/reportGenerator.ts` → `buildPhotoAppendix()`  
+- All photos grouped by section in a 3-column thumbnail grid at the end of the report
+- Each section heading in the appendix is an `InternalHyperlink` pointing back to the body section
+- Body section headings have `BookmarkStart` / `BookmarkEnd` anchors
+- **In Word**: Ctrl+Click to follow internal hyperlinks (Word requires Ctrl — this is normal behaviour)
+- **In PDF**: single-click works as expected
+
+---
+
+## Build Phases
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| 1 | ✅ Done | Supabase, auth, property list |
-| 2 | ✅ Done | Recording, transcription, SQLite, camera |
-| 3 | ✅ Done | AI classification, section picker, low-confidence banner |
-| 4 | ✅ Done | Full sync queue, photo upload, Opus image analysis, sync status indicator |
-| 5 | ✅ Done | Observation processing, AI summary, Word report generation, Resend email |
-| 5.5 | ✅ Done | First 4G field test, recurring items, PDF generation, dual email, property autocorrect, photo appendix groundwork |
-| 6 | ⬜ Next | Photo appendix with section links, tap-to-fullscreen in app, duplicate image grouping, server deployment |
+| 1 | ✅ | Supabase auth, property list |
+| 2 | ✅ | Audio recording (tap-to-record), Deepgram transcription, SQLite, camera |
+| 3 | ✅ | Sonnet AI classification, section picker, low-confidence banner |
+| 4 | ✅ | Background sync queue, Supabase Storage photo upload, Opus image analysis |
+| 5 | ✅ | Observation processing, AI summary, Word report (ASH template), Resend email |
+| 5.5 | ✅ | First field test (1 May 2026), recurring items, PDF via LibreOffice, dual email, property autocorrect, photo appendix with bookmarks |
+| 6 | 🔄 | Pre-report checklist ✅, weather auto-fill ✅, projected next inspection ✅, tap-to-fullscreen viewer ⬜, duplicate image grouping ⬜ |
 
 ---
 
-## What works offline vs what needs the server
+## What Works Offline vs Online
 
-| Feature | Offline (no network) | Online (Supabase only) | Needs local server |
-|---|---|---|---|
+| Feature | Offline | Online (Supabase only) | Needs server |
+|---------|---------|----------------------|--------------|
 | Login | ❌ | ✅ | — |
 | Property list | ❌ | ✅ | — |
 | Audio recording | ✅ | ✅ | — |
@@ -112,244 +337,165 @@ This is the setup needed when the app will be used over mobile data (not on the 
 | AI classification | ❌ | ❌ | ✅ `/api/classify` |
 | Save observations locally | ✅ | ✅ | — |
 | Camera | ✅ | ✅ | — |
-| Sync observations to Supabase | ❌ | ✅ | — |
-| Photo upload to Supabase | ❌ | ✅ | — |
+| Sync to Supabase | ❌ | ✅ | — |
+| Photo upload | ❌ | ✅ | — |
 | Opus photo analysis | ❌ | ❌ | ✅ `/api/analyse-photo` |
 | Generate report | ❌ | ❌ | ✅ `/api/generate-report` |
 
-**If classification fails** (server unreachable): observation is saved to "Additional" section and an error is shown. The inspection continues — observations are not lost.
+**If classification fails** (server unreachable): observation is saved to `additional` section. Inspection continues — nothing is lost.
 
 ---
 
-## Phase 4 — sync and photo analysis
+## Known Issues / Production Checklist
 
-**Sync flow** (`app/src/services/sync.ts`):
-1. On inspection complete → `triggerSync()` is called
-2. Fetches all local inspections with `status = 'completed'` and not yet synced
-3. For each: upsert inspection → upsert observations → upload photos to Supabase Storage
-4. After each photo upload → calls `POST /api/analyse-photo` on the backend
-5. Server downloads photo, runs claude-opus-4-6, saves description JSON to `photos.opus_description`
-6. Inspection marked synced in local SQLite
+Search for `// TODO [PRODUCTION]:` in the codebase to find all flagged items.
 
-**Sync status dot in ActiveInspection top bar:**
-- 🟢 Green = online, idle
-- 🔵 Blue pulsing = syncing
-- 🟡 Amber = offline
-- 🔴 Red = sync error
+- [ ] **Deepgram key in frontend bundle** — `app/src/services/transcription.ts`  
+  Move to `POST /api/transcribe` backend route. Add `DEEPGRAM_API_KEY` to server env. Remove `VITE_DEEPGRAM_API_KEY` from `app/.env.local`. Until then, the Deepgram key is exposed in the compiled JS.
 
-**Supabase Storage RLS** — `inspection-files` bucket needs two policies:
-- `INSERT` for authenticated users — allows app to upload
-- `SELECT` for authenticated users — allows server to download for Opus analysis
-- If uploads fail with "violates row-level security policy" → check Supabase → Storage → inspection-files → Policies
+- [ ] **CORS wildcard** — `server/index.ts`  
+  Replace `cors()` with `cors({ origin: ['https://app.ashproperty.co.uk'] })` before exposing the server to the public internet.
 
----
+- [ ] **`allowNavigation` IP whitelist** — `app/capacitor.config.ts`  
+  Still contains `192.168.1.108` (home dev IP). For production, replace with the Railway domain. Currently harmless — the IP is only used in local dev when `VITE_API_BASE_URL` points to it.
 
-## Phase 5 — report generation
+- [ ] **`allowMixedContent`** — `app/capacitor.config.ts`  
+  Set to `true` to allow the HTTPS app shell to call HTTP local endpoints during development. Safe to leave as-is since Railway is HTTPS, but should be removed when local dev is no longer needed.
 
-**Trigger:** "Generate Report" button on the PropertyDetailScreen, visible only on completed + synced inspections. Shows "Regenerate Report" after the first report has been sent (persisted in SQLite `report_sent` column, backfilled from Supabase on screen load).
+- [ ] **Report header email** — `server/services/reportGenerator.ts`  
+  Currently shows `ben@ashproperty.co.uk`. Replace with the firm's general enquiries address before client-facing use.
 
-**Flow** (`server/routes/generateReport.ts`):
-1. Fetch inspection, property (with flags), inspector details from Supabase
-2. Fetch and process all observations — Sonnet converts raw narrations to professional text + action + risk level. Property name/ref/address passed as context so phonetic misspellings from voice narration are auto-corrected. Saves back to Supabase.
-3. **Recurring items** — finds the most recent previous inspection for the same property (status `completed` OR `report_generated`), fetches its observations that had `action_text`, then asks Sonnet which are still outstanding in the current observations. Results appear in the "Matters Arising from Previous Inspection" table in the report. Entire step is non-fatal — returns empty list on any error.
-4. Generate AI overall condition summary (Sonnet)
-5. Download all photos from Supabase Storage. If any photo has no `opus_description` (e.g. server was down during sync), Opus analysis runs inline here and saves back to Supabase.
-6. Build Word document matching ASH template (`server/services/reportGenerator.ts`)
-7. Upload `report.docx` to Supabase Storage at `/{property_id}/{inspection_id}/report.docx`
-8. Update inspection status to `report_generated`
-9. Convert DOCX to PDF via LibreOffice (`server/services/pdf.ts`) — skipped gracefully if LibreOffice not installed
-10. Send email via Resend with both DOCX and PDF attached (DOCX for internal editing, PDF as client-ready copy)
+- [ ] **`REPORT_TO_OVERRIDE`** — Railway Variables + `server/services/email.ts`  
+  If still set, all reports route to one address regardless of which inspector generated them. Remove from Railway Variables for per-inspector routing.
 
-**Report sent persistence:**
-- After a successful report send, `report_sent=1` is written to local SQLite
-- On PropertyDetailScreen load, any synced inspection without a local `report_sent` flag is backfilled by checking Supabase for `status = 'report_generated'`
-- This ensures the "Regenerate Report" label survives logout/app restart
-
-**Email routing:**
-- `REPORT_TO_OVERRIDE` in `server/.env` redirects all emails to a fixed address (currently `ben.graham240689@gmail.com`)
-- Remove this env var when per-inspector routing is ready for production
-- Resend `from` address uses `onboarding@resend.dev` (Resend test sender — no domain verification needed)
-- When ready for production: verify `ashproperty.co.uk` domain in Resend dashboard and update the `from` field in `server/services/email.ts`
-
-**Property flags** — sections are omitted from the report if the property flag is false:
-- `has_car_park = false` → Car Park section omitted
-- `has_lift = false` → Lifts section omitted
-- `has_roof_access = false` → Roof section omitted
+- [ ] **Property feature flag UX** — `app/src/components/PreReportChecklist.tsx`  
+  When inspector marks a section N/A for the first time, prompt: *"Does this property have a [lift/car park]?"* If No → update `has_lift`/`has_car_park` on the Supabase `properties` record so future inspections pre-populate N/A automatically. Requires inspector write permission on those columns (RLS update needed). Note: `has_roof_access` is different — the roof section may still be inspectable from ground level even without physical access.
 
 ---
 
-## Recording UX — tap-to-record
+## Lessons Learned / Gotchas
 
-Recording uses a **tap-to-start / tap-to-stop** model, not hold-to-record. This was chosen because inspectors often work in confined spaces and can't hold a button while talking.
+These are hard-won from the build process. Read before starting any related work.
 
-**RecordButton layout** (`app/src/components/RecordButton.tsx`):
-- Three zones: `[cancel/empty] [record] [rightSlot]` — always balanced
-- Cancel × appears to the LEFT while recording (tap to discard the take)
-- Camera button is passed in as `rightSlot` from the parent so it stays visible at all times
-- `appendMode` prop changes idle label to "Tap to continue" when adding to an existing observation
-- Max recording duration: **60 seconds**
+### Android / Capacitor
 
-**Adding more to an observation** (`app/src/screens/ActiveInspectionScreen.tsx`):
-- Each observation in the feed has an "Add more to this observation" button
-- Tapping it sets `appendingToId` state and shows a blue border on that observation card
-- The next recording is appended (with a space separator) to that observation's `raw_narration`
-- The observation is re-synced with `synced=0` so the updated narration goes to Supabase
+**Gradle proguard-android.txt removed in Gradle 9.2.0**  
+When Android Studio auto-updated its Gradle plugin to 9.2.0, every `build.gradle` in `node_modules/@capacitor/*` and `node_modules/@capacitor-community/*` that referenced `getDefaultProguardFile('proguard-android.txt')` broke. The file was removed. Fix: replace with `proguard-android-optimize.txt` in every affected `build.gradle`. Files affected (may recur after `npm install`):
+- `app/android/app/build.gradle`
+- `node_modules/@capacitor/android/capacitor/build.gradle`
+- `node_modules/@capacitor/app/android/build.gradle`
+- `node_modules/@capacitor/camera/android/build.gradle`
+- `node_modules/@capacitor/filesystem/android/build.gradle`
+- `node_modules/@capacitor/network/android/build.gradle`
+- `node_modules/@capacitor/preferences/android/build.gradle`
+- `node_modules/@capacitor-community/sqlite/android/build.gradle`
+- `node_modules/@capacitor-community/keep-awake/android/build.gradle`
 
-**Authentication on cold start** (`app/src/contexts/AuthContext.tsx`):
-- `supabase.auth.signOut({ scope: 'local' })` is called every time the JS runtime initialises
-- This clears any persisted auth token so the inspector must re-login on every cold start
-- Background/foreground does not trigger a sign-out (the JS runtime stays alive)
+These are `node_modules` files — they are not committed. If you run `npm install` again they will be overwritten. A permanent fix would be a Gradle init script or a `postinstall` patch script.
 
----
+**Capacitor plugin version pinning**  
+Capacitor 6 plugins must be pinned to their Capacitor 6 compatible versions. Blindly upgrading will break the build. Known pins in `app/package.json`:
+- `@capacitor-community/keep-awake`: `^5.0.0` (v6 requires Capacitor 7+)
+- `@capacitor/app`: `^6.0.0` (v8 requires Capacitor 7+)
 
-## Known issues / pre-production checklist
+**Always rebuild and reinstall for `.env.local` or source changes**  
+The app is a compiled native binary. `npm run build` → `npx cap sync android` → reinstall via Android Studio is required for any change to take effect on device.
 
-Every item below has a matching `// TODO [PRODUCTION]:` comment in the source file.
-Run `grep -r "TODO \[PRODUCTION\]"` from the repo root to list them all at once.
+**tsx watch on Windows**  
+`tsx watch` spawns child processes that don't die cleanly with Ctrl+C on Windows. Use `npm run restart` (which kills port 3001 before restarting) rather than Ctrl+C → `npm run dev`.
 
-- [ ] **Deepgram key in frontend bundle** — `app/src/services/transcription.ts`
-      Move to a `POST /api/transcribe` backend route; add `DEEPGRAM_API_KEY` to `server/.env`;
-      remove `VITE_DEEPGRAM_API_KEY` from `app/.env.local`
+### docx library (server/services/reportGenerator.ts)
 
-- [ ] **Mixed-content / cleartext traffic** — `app/capacitor.config.ts` + `app/android/app/src/main/AndroidManifest.xml`
-      Remove `allowMixedContent: true` once the server is deployed behind HTTPS.
-      Verify no `android:usesCleartextTraffic="true"` in the merged release manifest.
+**BookmarkStart / BookmarkEnd argument order**  
+The `docx` library v9+ uses: `new BookmarkStart(name: string, id: number)` — name first, id second. Getting this wrong causes a TypeScript error that says "number not assignable to string".
 
-- [ ] **CORS wildcard** — `server/index.ts`
-      Replace `cors()` with `cors({ origin: ['https://app.ashproperty.co.uk'] })`
+**BookmarkEnd takes a bare number**  
+`new BookmarkEnd(id: number)` — not an object. The intuitive `new BookmarkEnd({ id })` fails.
 
-- [ ] **Resend sender address** — `server/services/email.ts`
-      Domain `propertyappdev.co.uk` registered and Cloudflare DNS records added (2 May 2026).
-      Awaiting Resend verification. Once verified, change `from` to
-      `'ASH Property App <reports@propertyappdev.co.uk>'`
+**InternalHyperlink anchor must match BookmarkStart name exactly**  
+`new InternalHyperlink({ anchor: 'section_lifts', children: [...] })` must match `new BookmarkStart('section_lifts', id)`. A mismatch produces a hyperlink that does nothing.
 
-- [ ] **Remove REPORT_TO_OVERRIDE** — Railway Variables + `server/services/email.ts`
-      Remove from Railway Variables once Resend verifies propertyappdev.co.uk.
-      Inspector emails in Supabase users table already updated to Proton addresses (2 May 2026):
-      Pete Birch → petebirchpm@proton.me, Ben Graham → ben240689@proton.me
+**Word requires Ctrl+Click for internal hyperlinks**  
+This is standard Word behaviour, not a bug. In PDF (LibreOffice-converted), single-click works correctly.
 
-- [ ] **Report header email address** — `server/services/reportGenerator.ts`
-      Replace `ben@ashproperty.co.uk` with the firm's general enquiries address
+### Weather API (server/services/weather.ts)
 
-- [ ] **`allowNavigation` IP whitelist** — `app/capacitor.config.ts`
-      Replace `192.168.1.108` with `ash-inspection-app-production.up.railway.app`
+**Nominatim requires a User-Agent header**  
+Without it, Nominatim will rate-limit or block requests. The header must identify the application. Failure to include it is a terms-of-service violation.
 
-- [x] **Server deployment** — deployed to Railway 2 May 2026
-      URL: `https://ash-inspection-app-production.up.railway.app`
-      LibreOffice included in Dockerfile. All env vars set in Railway Variables dashboard.
+**Open-Meteo `start_hour` / `end_hour` parameters**  
+Use these to fetch a single hour instead of a full day — much faster and avoids parsing array indices. Format: `YYYY-MM-DDTHH:00` in the timezone specified by the `timezone` parameter.
 
----
+**UTC → UK local time conversion**  
+`startTime` from Supabase is stored in UTC. Open-Meteo with `timezone=Europe/London` returns times in UK local time (handles BST/GMT automatically). You must convert the UTC hour to UK local hour before building the `start_hour` parameter. Use `toLocaleString('en-GB', { timeZone: 'Europe/London', hour: 'numeric', hour12: false })`.
 
-## Phase 6 — planned features
+**ERA5 archive has a ~5-day lag**  
+The Open-Meteo archive API doesn't have data for the last ~5 days. The forecast API (with `past_days=14`) covers recent inspections. The code tries forecast first, falls back to archive. Both can fail — the field just shows `—` gracefully.
 
-These were agreed after the first field test with Pete Birch on 1 May 2026.
+### Railway / Docker
 
-**Photo appendix with section links** (`server/services/reportGenerator.ts`)
-- Add bookmarks to each section heading in the Word document
-- Build an appendix at the end with small photo thumbnails
-- Each thumbnail is a clickable internal hyperlink back to its section
-- Medium effort, high value for longer inspections with many photos
+**Dockerfile must be in the directory set as Railway's Root Directory**  
+When the Dockerfile is in `server/` and Railway's Root Directory is set to `server`, it works. If Root Directory is left as the repo root, Railway looks for a Dockerfile there and fails. Set Root Directory in Railway → Settings → Source.
 
-**Tap-to-fullscreen photo viewer** (`app/src/screens/ActiveInspectionScreen.tsx` or new component)
-- Tapping a photo thumbnail during an inspection opens it full-screen with the Opus caption
-- Low effort, improves usability during review
+**All environment variables must be set in Railway Variables before first deploy**  
+The server crashes on startup if `SUPABASE_URL` etc. are missing (they're read at module load time). Set all vars in the Railway dashboard before pushing the first deployment.
 
-**Duplicate image grouping** (`server/routes/generateReport.ts`)
-- If Opus identifies multiple photos of the same subject (via description similarity), keep one in the section and move the rest to the appendix
-- Prevents the same wall/defect appearing three times in the same section
-- Medium effort
+### Supabase
 
-**PDF workflow — future phase**
-- Currently: DOCX and PDF both emailed to the inspector
-- Future: inspector edits DOCX in Word if needed, re-uploads to trigger PDF re-generation and re-send
-- Implementation: "Upload revised report" button in PropertyDetailScreen → uploads to Supabase Storage → server converts and re-emails
+**`auth.users` vs `public.users` are separate**  
+Supabase has two user tables. `auth.users` is the authentication table (managed by Supabase). `public.users` is our application profile table (with `full_name`, `email`, `job_title`, `role`). When adding or updating a user, you must update both: create in `auth.users` via the Supabase Auth dashboard, then add a corresponding row to `public.users` with the same `id`.
 
-**Opus → Sonnet supplementary observations** (future)
-- If Opus identifies something notable in a photo that has no matching observation in that section, Sonnet drafts a supplementary observation
-- Requires careful deduplication against existing narrations
+**Service role key vs anon key**  
+The server uses the service role key (bypasses RLS — can read/write anything). The app uses the anon key (subject to RLS). Never put the service role key in the app.
 
-**Photo-only inspection mode** (future)
-- Inspector takes photos only, no voice narrations
-- Opus classifies each photo into the correct section
-- Sonnet drafts observations from Opus descriptions alone
+### DNS / Email
 
-**Inspector signature on report** (future)
-- Option A: stored signature image applied automatically
-- Option B: inspector prompted to sign on their phone at report generation, appended to document
+**123-reg DNS UI can't handle long TXT records**  
+The DKIM TXT record that Resend requires is very long and causes a "serverError" in 123-reg's DNS management UI. Fix: delegate DNS to Cloudflare (free) — Cloudflare handles long TXT values without issue.
 
-**Pre-report checklist / section completion prompts** (`app/src/screens/PropertyDetailScreen.tsx` or new component)
-- When "Generate Report" is tapped, show a checklist screen before generating
-- Flags any sections with zero observations: "You haven't recorded anything for X — is that intentional?"
-- Additional standard prompts shown on every inspection (all marked "if required/present"):
-  - Have you checked the roof (if accessible)?
-  - Have you checked the lifts (if present)?
-  - Have you checked the car park (if present)?
-  - Have you checked the fire alarm log (if required)?
-  - Have you checked the emergency lighting (if required)?
-  - Have you taken a meter reading (if required)?
-  - Any access issues to note?
-- Each prompt has two buttons: "Nothing to report" and "Go back and add"
-- Property flags (`has_lift`, `has_car_park`, `has_roof_access`) auto-hide irrelevant prompts
-- "This property doesn't have this" button saves the flag back to Supabase for future inspections
-- Once all items acknowledged, report generates as normal
-
-**Confidence banner improvement** (done 1 May 2026)
-- Banner now says "Not sure about the last observation ↓"
-- Relevant observation card highlighted with amber border matching the banner colour
+**Resend domain verification is not automatic**  
+After adding DNS records in Cloudflare, you must click "Verify" in the Resend dashboard. DNS propagation can take up to 24 hours; Resend shows the status.
 
 ---
 
-## Server management
+## Phase 6 — Remaining Planned Work
 
-**Production server (Railway) — use this for all testing from 2 May 2026:**
-- URL: `https://ash-inspection-app-production.up.railway.app`
-- Health check: `https://ash-inspection-app-production.up.railway.app/health` → `{"ok":true}`
-- Logs: Railway dashboard → ash-inspection-app → Deployments → View logs
-- Env vars: Railway dashboard → ash-inspection-app → Variables
-- Redeploy: automatic on every `git push` to `main`
-- LibreOffice is included in the Docker container — PDF generation works in production
+**Tap-to-fullscreen photo viewer**  
+Tapping a photo thumbnail in `ActiveInspectionScreen` or in the feed item opens it full-screen with the Opus caption. Low effort, improves usability.
 
-**Local server (development only):**
+**Duplicate image grouping** (`server/routes/generateReport.ts`)  
+If Opus identifies multiple photos of the same subject (via description similarity), keep one in the section grid and move duplicates to the appendix only. Prevents the same wall/defect appearing six times in one section.
+
+**Property feature flag first-time prompt** (see TODO in checklist above)  
+When a section is marked N/A in the pre-report checklist for the first time on a property, ask: *"Does this property have a [lift/car park]?"* → update `has_lift`/`has_car_park` in Supabase properties. Needs RLS update.
+
+**Scheduling view** (future)  
+Dashboard showing all properties with their projected next inspection dates in a calendar view. Useful once more properties are added.
+
+**Deepgram → server-side transcription** (security)  
+Move `POST /api/transcribe` to the server to remove the Deepgram key from the app bundle.
+
+**Inspector signature** (future)  
+Option A: stored signature image applied automatically. Option B: inspector signs on phone at report generation.
+
+**PDF workflow improvement** (future)  
+Inspector edits DOCX in Word if needed → re-uploads → server converts to PDF and re-emails.
+
+**iOS support** (future)  
+Requires macOS + Xcode + Apple Developer account. Not in scope until Android is proven in production.
+
+---
+
+## Server Management
+
+**Health check:** `https://ash-inspection-app-production.up.railway.app/health` → `{"ok":true}`  
+**Logs:** Railway dashboard → ash-inspection-app → Deployments → View logs  
+**Env vars:** Railway dashboard → ash-inspection-app → Variables  
+**Redeploy:** Automatic on `git push origin main`
+
+**Local server:**
 ```
 cd C:\Users\bengr\OneDrive\Desktop\ash-inspection-app\server
-npm run dev
-```
-
-**Restarting cleanly** (use this instead of Ctrl+C to avoid port-in-use errors):
-```
-npm run restart
-```
-This kills port 3001 and restarts in one step. tsx watch spawns child processes that don't die cleanly with Ctrl+C on Windows — `npm run restart` handles this properly.
-
-**If port 3001 is stuck and npm run restart fails**, Claude can run this PowerShell command:
-```
-Stop-Process -Id (Get-NetTCPConnection -LocalPort 3001).OwningProcess -Force
-```
-
-**Cloudflared tunnel** — no longer needed for field tests now that Railway is live.
-Was used pre-deployment when server ran locally.
-
----
-
-## Project structure
-
-```
-ash-inspection-app/
-├── app/                        # React + Capacitor frontend
-│   ├── src/
-│   │   ├── components/         # RecordButton, ObservationFeedItem, SectionPicker
-│   │   ├── screens/            # ActiveInspectionScreen, PropertyListScreen, PropertyDetailScreen
-│   │   ├── services/           # sync.ts, classify.ts, transcription.ts, report.ts, supabase.ts
-│   │   ├── db/                 # SQLite local database (database.ts)
-│   │   ├── hooks/              # useSync.ts, useNetwork.ts
-│   │   ├── contexts/           # AuthContext
-│   │   └── config/models.ts    # Model routing — only place model names appear
-│   └── android/                # Capacitor Android project
-├── server/                     # Node.js Express backend
-│   ├── routes/                 # classify.ts, analysePhoto.ts, generateReport.ts
-│   ├── services/               # anthropic.ts, supabase.ts, reportGenerator.ts, email.ts, pdf.ts
-│   ├── prompts/                # classify.ts, analyseImage.ts, processObservation.ts, generateSummary.ts
-│   └── config/models.ts        # Model names — single source of truth
-└── supabase/
-    └── migrations/             # Run in order — check numbering before adding new ones
+npm run dev        # normal start
+npm run restart    # kills port 3001 then restarts (use after crashes)
 ```
