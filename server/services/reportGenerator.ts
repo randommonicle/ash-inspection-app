@@ -2,6 +2,7 @@ import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   HeadingLevel, AlignmentType, BorderStyle, WidthType, ShadingType,
   ImageRun, PageBreak, Header, Footer, PageNumber, TabStopType,
+  BookmarkStart, BookmarkEnd, InternalHyperlink,
 } from 'docx'
 
 // ── Colour palette (matches ASH template exactly) ────────────────────────────
@@ -281,11 +282,15 @@ function summaryBox(text: string): Table {
 }
 
 // ── Section sub-heading (plain paragraph with bottom border rule) ──────────────
-function sectionSubHeading(label: string): Paragraph {
+function sectionSubHeading(label: string, bookmarkId?: number, bookmarkName?: string): Paragraph {
+  const textRun = t(label, { bold: true, size: 22, color: C.navy })
+  const children = (bookmarkId !== undefined && bookmarkName)
+    ? [new BookmarkStart(bookmarkName, bookmarkId), textRun, new BookmarkEnd(bookmarkId)]
+    : [textRun]
   return new Paragraph({
     border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: C.midBlue, space: 4 } },
     spacing: { before: 200, after: 80 },
-    children: [t(label, { bold: true, size: 22, color: C.navy })],
+    children,
   })
 }
 
@@ -618,6 +623,122 @@ function buildDeclaration(inspectorName: string, inspectorTitle: string, inspect
   ]
 }
 
+// ── Photo appendix ────────────────────────────────────────────────────────────
+function buildPhotoAppendix(
+  activeSections: string[],
+  photosBySection: Map<string, ReportPhoto[]>,
+): (Paragraph | Table)[] {
+  const sectionsWithPhotos = activeSections.filter(key =>
+    (photosBySection.get(key) ?? []).some(p => p.imageBuffer),
+  )
+  if (sectionsWithPhotos.length === 0) return []
+
+  const thumbWidth = Math.floor(9906 / 3) // 3 columns
+
+  const results: (Paragraph | Table)[] = [
+    new Paragraph({ children: [new PageBreak()] }),
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      spacing: { before: 240, after: 120 },
+      children: [t('Photo Appendix', { bold: true, size: 28, color: C.navy })],
+    }),
+    new Paragraph({
+      spacing: { before: 60, after: 120 },
+      children: [t(
+        'All photographs taken during this inspection are collated below by section. Click a section heading to return to the relevant observations.',
+        { size: 20 },
+      )],
+    }),
+  ]
+
+  for (const sectionKey of sectionsWithPhotos) {
+    const label  = SECTION_LABELS[sectionKey] ?? sectionKey
+    const photos = (photosBySection.get(sectionKey) ?? []).filter(p => p.imageBuffer)
+
+    // Section label as internal hyperlink back to the bookmark in the body
+    results.push(
+      new Paragraph({
+        border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: C.midBlue, space: 4 } },
+        spacing: { before: 200, after: 80 },
+        children: [
+          new InternalHyperlink({
+            anchor: `section_${sectionKey}`,
+            children: [
+              new TextRun({ text: `↑ ${label}`, font: 'Arial', bold: true, size: 20, color: C.midBlue }),
+            ],
+          }),
+        ],
+      }),
+    )
+
+    // 3-column thumbnail grid
+    for (let i = 0; i < photos.length; i += 3) {
+      const row   = photos.slice(i, i + 3)
+      const cells = row.map(photo => {
+        const caption = photo.opus_description?.suggested_caption ?? photo.caption ?? ''
+        const imgW    = Math.round((thumbWidth - 160) / 15)
+        const imgH    = Math.round(imgW * 0.75)
+        const kids: Paragraph[] = []
+        try {
+          kids.push(new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 40, after: 30 },
+            children: [new ImageRun({
+              type: 'jpg', data: photo.imageBuffer!,
+              transformation: { width: imgW, height: imgH },
+              altText: { title: caption, description: caption, name: photo.id },
+            })],
+          }))
+        } catch {
+          kids.push(new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 80, after: 80 },
+            children: [t('[Photo]', { italic: true, size: 16, color: C.caption })],
+          }))
+        }
+        if (caption) {
+          kids.push(new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing: { before: 0, after: 40 },
+            children: [t(caption, { italic: true, size: 14, color: C.caption })],
+          }))
+        }
+        return new TableCell({
+          borders: border(C.midGrey),
+          width: { size: thumbWidth, type: WidthType.DXA },
+          shading: { fill: C.lightGrey, type: ShadingType.CLEAR },
+          margins: { top: 40, bottom: 40, left: 80, right: 80 },
+          children: kids,
+        })
+      })
+
+      // Pad row to 3 cells
+      while (cells.length < 3) {
+        cells.push(new TableCell({
+          borders: border(C.midGrey),
+          width: { size: thumbWidth, type: WidthType.DXA },
+          shading: { fill: C.lightGrey, type: ShadingType.CLEAR },
+          margins: { top: 40, bottom: 40, left: 80, right: 80 },
+          children: [new Paragraph({ children: [] })],
+        }))
+      }
+
+      results.push(
+        new Table({
+          width: { size: 9906, type: WidthType.DXA },
+          columnWidths: [thumbWidth, thumbWidth, thumbWidth],
+          rows: [new TableRow({ children: cells })],
+        }),
+        new Paragraph({ spacing: { before: 0, after: 60 }, children: [] }),
+      )
+    }
+
+    results.push(new Paragraph({ spacing: { before: 0, after: 120 }, children: [] }))
+  }
+
+  return results
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 export async function buildReportDocx(data: ReportData): Promise<Buffer> {
   console.log(`[REPORT] Building Word document for ${data.propertyName}`)
@@ -695,12 +816,13 @@ export async function buildReportDocx(data: ReportData): Promise<Buffer> {
   )
 
   // ── Observation sections ──────────────────────────────────────────────────
-  for (const sectionKey of activeSections) {
+  for (let i = 0; i < activeSections.length; i++) {
+    const sectionKey   = activeSections[i]
     const label        = SECTION_LABELS[sectionKey] ?? sectionKey
     const observations = obsBySection.get(sectionKey) ?? []
     const photos       = photosBySection.get(sectionKey) ?? []
 
-    children.push(sectionSubHeading(label))
+    children.push(sectionSubHeading(label, i, `section_${sectionKey}`))
 
     if (observations.length === 0) {
       children.push(
@@ -739,6 +861,9 @@ export async function buildReportDocx(data: ReportData): Promise<Buffer> {
 
   // ── Recurring items ───────────────────────────────────────────────────────
   children.push(...buildRecurringItems(data.recurringItems))
+
+  // ── Photo appendix ────────────────────────────────────────────────────────
+  children.push(...buildPhotoAppendix(activeSections, photosBySection))
 
   // ── Inspector declaration ─────────────────────────────────────────────────
   children.push(...buildDeclaration(data.inspectorName, data.inspectorTitle, data.inspectionDate, data.reportGeneratedAt))
