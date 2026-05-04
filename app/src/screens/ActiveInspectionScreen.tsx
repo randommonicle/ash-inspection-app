@@ -38,13 +38,14 @@ export function ActiveInspectionScreen() {
   const online = useNetwork()
   const { status: syncStatus, triggerSync } = useSync()
 
-  const property = location.state?.property as Property | undefined
+  const property      = location.state?.property as Property | undefined
+  const jumpToSection = location.state?.jumpToSection as SectionKey | undefined
 
   const [inspection, setInspection]     = useState<LocalInspection | null>(null)
   const [observations, setObservations] = useState<LocalObservation[]>([])
   const [photos, setPhotos]             = useState<LocalPhoto[]>([])
   const [isTranscribing, setIsTranscribing] = useState(false)
-  const [currentSection, setCurrentSection] = useState<SectionKey | null>(null)
+  const [currentSection, setCurrentSection] = useState<SectionKey | null>(jumpToSection ?? null)
   const [elapsed, setElapsed]           = useState(0)
   const [completing, setCompleting]     = useState(false)
   const [error, setError]               = useState('')
@@ -303,13 +304,19 @@ export function ActiveInspectionScreen() {
         </div>
 
         {/* Current section indicator */}
-        <div className="mt-2 bg-ash-mid/40 rounded-lg px-3 py-1.5">
+        <div className={`mt-2 rounded-lg px-3 py-1.5 ${
+          jumpToSection && currentSection === jumpToSection
+            ? 'bg-amber-400/30'
+            : 'bg-ash-mid/40'
+        }`}>
           <p className="text-ash-light text-xs">
-            {currentSection
-              ? `Last section: ${SECTION_LABELS[currentSection]}`
-              : observations.length === 0
-                ? 'Ready — tap the button below to record your first observation'
-                : `${observations.length} observation${observations.length === 1 ? '' : 's'} recorded`
+            {jumpToSection && currentSection === jumpToSection
+              ? `⚠ Add observation for: ${SECTION_LABELS[jumpToSection]}`
+              : currentSection
+                ? `Last section: ${SECTION_LABELS[currentSection]}`
+                : observations.length === 0
+                  ? 'Ready — tap the button below to record your first observation'
+                  : `${observations.length} observation${observations.length === 1 ? '' : 's'} recorded`
             }
           </p>
         </div>

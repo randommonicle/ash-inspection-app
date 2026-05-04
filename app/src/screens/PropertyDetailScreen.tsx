@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { getInspectionsForProperty, createInspection, deleteInspection, markReportSent } from '../db/database'
+import { getInspectionsForProperty, createInspection, deleteInspection, markReportSent, getObservationsForInspection } from '../db/database'
 import { generateReport } from '../services/report'
-import type { Property, LocalInspection } from '../types'
+import { PreReportChecklist } from '../components/PreReportChecklist'
+import type { Property, LocalInspection, LocalObservation } from '../types'
 
 export function PropertyDetailScreen() {
   const { id } = useParams<{ id: string }>()
@@ -19,6 +20,7 @@ export function PropertyDetailScreen() {
   const [progress, setProgress]             = useState(0)
   const [progressStage, setProgressStage]   = useState('')
   const [error, setError]                   = useState('')
+  const [checklist, setChecklist]           = useState<{ inspectionId: string; observations: LocalObservation[] } | null>(null)
   const progressIntervalRef                 = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Known pipeline stages: [ms from start, target %, label]
@@ -74,6 +76,12 @@ export function PropertyDetailScreen() {
     }, 2000)
     return () => clearInterval(timer)
   }, [id, inspections])
+
+  // Opens the pre-report checklist before committing to generation
+  const handleOpenChecklist = useCallback(async (inspectionId: string) => {
+    const observations = await getObservationsForInspection(inspectionId)
+    setChecklist({ inspectionId, observations })
+  }, [])
 
   const handleGenerateReport = useCallback(async (inspectionId: string) => {
     setGeneratingId(inspectionId)
@@ -282,7 +290,11 @@ export function PropertyDetailScreen() {
 
                         {/* Button — label persists across sessions via ins.report_sent */}
                         <button
-                          onClick={e => { e.stopPropagation(); handleGenerateReport(ins.id) }}
+                          onClick={e => {
+                            e.stopPropagation()
+                            if (generatingId === ins.id) return
+                            handleOpenChecklist(ins.id)
+                          }}
                           disabled={generatingId !== null}
                           className="w-full py-2 rounded-lg bg-ash-navy text-white text-xs font-bold active:scale-[0.98] transition disabled:opacity-50"
                         >
@@ -316,6 +328,26 @@ export function PropertyDetailScreen() {
           {starting ? 'Starting…' : '▶  Start Inspection'}
         </button>
       </div>
+
+      {/* Pre-report checklist modal */}
+      {checklist && property && (
+        <PreReportChecklist
+          property={property}
+          inspectionId={checklist.inspectionId}
+          observations={checklist.observations}
+          onCancel={() => setChecklist(null)}
+          onConfirm={() => {
+            const { inspectionId } = checklist
+            setChecklist(null)
+            handleGenerateReport(inspectionId)
+          }}
+          onEditSection={sectionKey => {
+            const { inspectionId } = checklist
+            setChecklist(null)
+            navigate(`/inspection/${inspectionId}`, { state: { property, jumpToSection: sectionKey } })
+          }}
+        />
+      )}
     </div>
   )
 }

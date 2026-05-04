@@ -277,6 +277,22 @@ These were agreed after the first field test with Pete Birch on 1 May 2026.
 - Option A: stored signature image applied automatically
 - Option B: inspector prompted to sign on their phone at report generation, appended to document
 
+**Pre-report checklist / section completion prompts** (`app/src/screens/PropertyDetailScreen.tsx` or new component)
+- When "Generate Report" is tapped, show a checklist screen before generating
+- Flags any sections with zero observations: "You haven't recorded anything for X — is that intentional?"
+- Additional standard prompts shown on every inspection (all marked "if required/present"):
+  - Have you checked the roof (if accessible)?
+  - Have you checked the lifts (if present)?
+  - Have you checked the car park (if present)?
+  - Have you checked the fire alarm log (if required)?
+  - Have you checked the emergency lighting (if required)?
+  - Have you taken a meter reading (if required)?
+  - Any access issues to note?
+- Each prompt has two buttons: "Nothing to report" and "Go back and add"
+- Property flags (`has_lift`, `has_car_park`, `has_roof_access`) auto-hide irrelevant prompts
+- "This property doesn't have this" button saves the flag back to Supabase for future inspections
+- Once all items acknowledged, report generates as normal
+
 **Confidence banner improvement** (done 1 May 2026)
 - Banner now says "Not sure about the last observation ↓"
 - Relevant observation card highlighted with amber border matching the banner colour

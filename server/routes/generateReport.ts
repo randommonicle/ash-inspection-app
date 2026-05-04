@@ -7,6 +7,7 @@ import { GENERATE_SUMMARY_PROMPT } from '../prompts/generateSummary'
 import { buildReportDocx, type ReportObservation, type ReportPhoto, type RecurringItem } from '../services/reportGenerator'
 import { sendReportEmail } from '../services/email'
 import { convertDocxToPdf } from '../services/pdf'
+import { getWeatherForInspection } from '../services/weather'
 
 const router  = Router()
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -294,10 +295,21 @@ router.post('/', async (req: Request, res: Response) => {
       recurringItems = []
     }
 
-    // ── 4. Generate overall summary ───────────────────────────────────────────
-    const overallSummary = processedObservations.length > 0
-      ? await generateSummary(processedObservations)
-      : 'No observations were recorded during this inspection.'
+    // ── 4. Generate summary + fetch weather concurrently ─────────────────────
+    const [overallSummary, weatherStr] = await Promise.all([
+      processedObservations.length > 0
+        ? generateSummary(processedObservations)
+        : Promise.resolve('No observations were recorded during this inspection.'),
+      getWeatherForInspection(propertyAddress, inspection.start_time),
+    ])
+
+    // Projected next inspection: one calendar month after the inspection date.
+    // Labelled "projected" since bank holidays and leave are not accounted for.
+    const nextInspDate = new Date(startDate)
+    nextInspDate.setMonth(nextInspDate.getMonth() + 1)
+    const nextInspection = nextInspDate.toLocaleDateString('en-GB', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    }) + ' (projected)'
 
     // ── 5. Fetch photos and download image data ───────────────────────────────
     const { data: rawPhotos, error: photoErr } = await supabase
@@ -367,8 +379,8 @@ router.post('/', async (req: Request, res: Response) => {
       inspectionDate,
       startTime,
       endTime,
-      weather:          inspection.weather ?? null,
-      nextInspection:   inspection.next_inspection ?? null,
+      weather:          weatherStr,
+      nextInspection:   nextInspection,
       inspectorName,
       inspectorTitle,
       overallSummary,
