@@ -61,7 +61,7 @@ router.post(
         Authorization:  `Token ${apiKey}`,
         'Content-Type': contentType,
       },
-      body: audioBuffer,
+      body: new Uint8Array(audioBuffer),
     })
 
     if (!dgRes.ok) {
