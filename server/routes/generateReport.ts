@@ -160,6 +160,7 @@ const SECTION_LABELS_FOR_SYNTHESIS: Record<string, string> = {
   stairwells:        'Stairwells and Circulation',
   lifts:             'Lifts',
   plant_room:        'Plant Room and Utilities',
+  meter_reads:       'Meter Reads and Utility Services',
   internal_communal: 'Internal Communal Areas (General)',
   additional:        'Additional / Property-Specific Areas',
 }
@@ -419,7 +420,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     const SECTION_ORDER_FOR_SYNTHESIS = [
       'external_approach', 'grounds', 'bin_store', 'car_park',
       'external_fabric', 'roof', 'communal_entrance', 'stairwells',
-      'lifts', 'plant_room', 'internal_communal', 'additional',
+      'lifts', 'plant_room', 'meter_reads', 'internal_communal', 'additional',
     ]
     const SECTION_FLAGS_FOR_SYNTHESIS: Record<string, keyof typeof propertyFlags> = {
       car_park: 'has_car_park',

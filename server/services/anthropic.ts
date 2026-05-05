@@ -9,7 +9,7 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 export type SectionKey =
   | 'external_approach' | 'grounds' | 'bin_store' | 'car_park'
   | 'external_fabric' | 'roof' | 'communal_entrance' | 'stairwells'
-  | 'lifts' | 'plant_room' | 'internal_communal' | 'additional'
+  | 'lifts' | 'plant_room' | 'meter_reads' | 'internal_communal' | 'additional'
 
 export interface ClassifyResult {
   section_key: SectionKey

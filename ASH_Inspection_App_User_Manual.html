@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ASH Inspection App — User Manual</title>
+<style>
+  :root {
+    --navy:   #0f1b2d;
+    --mid:    #1e2d42;
+    --blue:   #2563eb;
+    --light:  #94a3b8;
+    --text:   #1e293b;
+    --border: #cbd5e1;
+    --bg:     #f8fafc;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 11pt;
+    color: var(--text);
+    background: white;
+    line-height: 1.6;
+  }
+
+  /* ── Cover page ── */
+  .cover {
+    page-break-after: always;
+    background: var(--navy);
+    color: white;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 60px 40px;
+  }
+  .cover-wordmark {
+    font-size: 52pt;
+    font-weight: 700;
+    letter-spacing: 0.3em;
+    margin-bottom: 8px;
+  }
+  .cover-sub {
+    font-size: 10pt;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--light);
+    margin-bottom: 48px;
+  }
+  .cover-rule {
+    width: 60px;
+    height: 2px;
+    background: var(--blue);
+    margin: 0 auto 48px;
+  }
+  .cover-title {
+    font-size: 22pt;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  .cover-subtitle {
+    font-size: 12pt;
+    color: var(--light);
+    margin-bottom: 80px;
+  }
+  .cover-footer {
+    font-size: 9pt;
+    color: var(--light);
+    letter-spacing: 0.1em;
+    position: absolute;
+    bottom: 40px;
+  }
+
+  /* ── TOC page ── */
+  .toc-page {
+    page-break-after: always;
+    padding: 60px 72px;
+  }
+  .toc-heading {
+    font-size: 16pt;
+    font-weight: 700;
+    color: var(--navy);
+    border-bottom: 2px solid var(--navy);
+    padding-bottom: 10px;
+    margin-bottom: 28px;
+  }
+  .toc-section {
+    margin-bottom: 6px;
+  }
+  .toc-section a {
+    text-decoration: none;
+    color: var(--text);
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px dotted var(--border);
+  }
+  .toc-section a:hover { color: var(--blue); }
+  .toc-num { color: var(--blue); font-weight: 600; margin-right: 10px; }
+  .toc-subsection a {
+    color: var(--light);
+    font-size: 10pt;
+    padding-left: 24px;
+  }
+
+  /* ── Content pages ── */
+  .page {
+    padding: 52px 72px;
+    page-break-after: always;
+  }
+  .page:last-child { page-break-after: auto; }
+
+  /* ── Section headers ── */
+  .section-header {
+    background: var(--navy);
+    color: white;
+    padding: 14px 20px;
+    margin-bottom: 28px;
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    border-radius: 4px;
+  }
+  .section-num {
+    font-size: 22pt;
+    font-weight: 700;
+    opacity: 0.4;
+    line-height: 1;
+  }
+  .section-title {
+    font-size: 15pt;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+  }
+
+  h2 {
+    font-size: 12pt;
+    font-weight: 700;
+    color: var(--navy);
+    margin: 28px 0 10px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 {
+    font-size: 11pt;
+    font-weight: 600;
+    color: var(--mid);
+    margin: 20px 0 8px;
+  }
+  p { margin-bottom: 10px; }
+  ul, ol { margin: 10px 0 10px 24px; }
+  li { margin-bottom: 5px; }
+
+  /* ── Step boxes ── */
+  .steps { counter-reset: step; margin: 16px 0; }
+  .step {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 14px;
+    align-items: flex-start;
+  }
+  .step-num {
+    background: var(--navy);
+    color: white;
+    font-weight: 700;
+    font-size: 10pt;
+    min-width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .step-body { flex: 1; }
+  .step-body strong { display: block; margin-bottom: 2px; }
+
+  /* ── Tip / note boxes ── */
+  .tip {
+    background: #eff6ff;
+    border-left: 4px solid var(--blue);
+    padding: 12px 16px;
+    margin: 16px 0;
+    border-radius: 0 4px 4px 0;
+  }
+  .tip-label {
+    font-size: 9pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--blue);
+    margin-bottom: 4px;
+  }
+  .warning {
+    background: #fff7ed;
+    border-left: 4px solid #f97316;
+    padding: 12px 16px;
+    margin: 16px 0;
+    border-radius: 0 4px 4px 0;
+  }
+  .warning-label {
+    font-size: 9pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #f97316;
+    margin-bottom: 4px;
+  }
+
+  /* ── Screenshot placeholder ── */
+  .screenshot {
+    border: 1px dashed var(--border);
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 32px;
+    text-align: center;
+    color: var(--light);
+    font-size: 10pt;
+    margin: 16px 0;
+    min-height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ── Reference table ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 10pt;
+  }
+  th {
+    background: var(--navy);
+    color: white;
+    text-align: left;
+    padding: 8px 12px;
+    font-weight: 600;
+  }
+  td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: var(--bg); }
+
+  /* ── Print ── */
+  @media print {
+    body { font-size: 10.5pt; }
+    .cover { min-height: 100vh; }
+    .page, .toc-page { padding: 44px 60px; }
+    a { color: inherit; }
+    .section-header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .tip { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .warning { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .cover { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .step-num { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     COVER PAGE
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="cover">
+  <div class="cover-wordmark">ASH</div>
+  <div class="cover-sub">Chartered Surveyors</div>
+  <div class="cover-rule"></div>
+  <div class="cover-title">Property Inspection App</div>
+  <div class="cover-subtitle">User Manual &amp; Reference Guide</div>
+  <div class="cover-footer">1-5 Kew Place &nbsp;·&nbsp; Cheltenham GL53 7NQ &nbsp;·&nbsp; T: 01242 237274 &nbsp;·&nbsp; ashproperty.co.uk</div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     TABLE OF CONTENTS
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="toc-page">
+  <div class="toc-heading">Contents</div>
+
+  <div class="toc-section"><a href="#s1"><span><span class="toc-num">1</span> Getting Started</span><span>3</span></a></div>
+  <div class="toc-section toc-subsection"><a href="#s1-install"><span>Installing the App</span></a></div>
+  <div class="toc-section toc-subsection"><a href="#s1-register"><span>Creating Your Account</span></a></div>
+  <div class="toc-section toc-subsection"><a href="#s1-signin"><span>Signing In</span></a></div>
+
+  <div class="toc-section"><a href="#s2"><span><span class="toc-num">2</span> The Property List</span><span>4</span></a></div>
+
+  <div class="toc-section"><a href="#s3"><span><span class="toc-num">3</span> Conducting an Inspection</span><span>5</span></a></div>
+  <div class="toc-section toc-subsection"><a href="#s3-start"><span>Starting an Inspection</span></a></div>
+  <div class="toc-section toc-subsection"><a href="#s3-narrate"><span>Recording Observations</span></a></div>
+  <div class="toc-section toc-subsection"><a href="#s3-photos"><span>Taking Photographs</span></a></div>
+  <div class="toc-section toc-subsection"><a href="#s3-sections"><span>Inspection Sections</span></a></div>
+
+  <div class="toc-section"><a href="#s4"><span><span class="toc-num">4</span> Offline Working</span><span>7</span></a></div>
+
+  <div class="toc-section"><a href="#s5"><span><span class="toc-num">5</span> Completing an Inspection</span><span>8</span></a></div>
+  <div class="toc-section toc-subsection"><a href="#s5-end"><span>Ending the Inspection</span></a></div>
+  <div class="toc-section toc-subsection"><a href="#s5-checklist"><span>Pre-Report Checklist</span></a></div>
+  <div class="toc-section toc-subsection"><a href="#s5-report"><span>Generating the Report</span></a></div>
+
+  <div class="toc-section"><a href="#s6"><span><span class="toc-num">6</span> Tips for Best Results</span><span>9</span></a></div>
+
+  <div class="toc-section"><a href="#s7"><span><span class="toc-num">7</span> Admin Dashboard</span><span>11</span></a></div>
+
+  <div class="toc-section"><a href="#s8"><span><span class="toc-num">8</span> Troubleshooting</span><span>12</span></a></div>
+
+  <div class="toc-section"><a href="#s9"><span><span class="toc-num">9</span> Inspection Sections Reference</span><span>13</span></a></div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SECTION 1 — GETTING STARTED
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="s1">
+  <div class="section-header">
+    <span class="section-num">01</span>
+    <span class="section-title">Getting Started</span>
+  </div>
+
+  <h2 id="s1-install">Installing the App</h2>
+  <p>The ASH Inspection App is distributed as an Android APK file. You will receive this file directly from your manager. The app is not available on the Google Play Store.</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body"><strong>Enable unknown sources</strong>
+        On your Android device, go to <em>Settings → Security</em> (or <em>Settings → Apps → Special App Access → Install Unknown Apps</em>) and allow installation from your file manager or email app.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body"><strong>Open the APK file</strong>
+        Open the APK file you received (via email or file transfer) and tap <em>Install</em> when prompted.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body"><strong>Launch the app</strong>
+        Once installed, the app will appear on your home screen or app drawer as <em>ASH Inspections</em>.</div>
+    </div>
+  </div>
+
+  <div class="tip">
+    <div class="tip-label">Note</div>
+    When a new version of the app is released, you will receive an updated APK. Simply install it over the existing app — your data and login are preserved.
+  </div>
+
+  <h2 id="s1-register">Creating Your Account</h2>
+  <p>Each Property Manager registers once using the app. Only names pre-approved by the administrator appear on the registration screen.</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body"><strong>Tap "Create an account"</strong> on the sign-in screen.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body"><strong>Select your name</strong> from the list of approved Property Managers.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body"><strong>Enter your email address</strong> — use whichever address you prefer to receive reports on. This becomes your login username.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body"><strong>Choose a password</strong> of at least 8 characters, then confirm it.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body"><strong>Check your inbox</strong> — a confirmation email will arrive. Click the link inside to activate your account.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">6</div>
+      <div class="step-body"><strong>Return to the app</strong> and sign in with your email and password.</div>
+    </div>
+  </div>
+
+  <div class="warning">
+    <div class="warning-label">Important</div>
+    You must click the confirmation link in your email before you can sign in. If you do not receive the email within a few minutes, check your spam folder.
+  </div>
+
+  <h2 id="s1-signin">Signing In</h2>
+  <p>Enter the email address and password you registered with. The app will keep you signed in between sessions unless you explicitly sign out. If you forget your password, tap <em>Forgot password?</em> on the sign-in screen.</p>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SECTION 2 — PROPERTY LIST
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="s2">
+  <div class="section-header">
+    <span class="section-num">02</span>
+    <span class="section-title">The Property List</span>
+  </div>
+
+  <p>After signing in, you will see a list of all properties assigned to you. Properties belonging to other Property Managers are not shown.</p>
+
+  <h2>Navigating the List</h2>
+  <ul>
+    <li>Properties are listed alphabetically by name.</li>
+    <li>Tap a property to view its details and start or resume an inspection.</li>
+    <li>Use the search bar at the top to filter by name or address.</li>
+  </ul>
+
+  <h2>Reporting an Issue</h2>
+  <p>If you encounter a problem with the app itself — a bug, an unexpected error, or a suggestion for improvement — tap <em>Report issue</em> in the top-right corner of the property list screen. A short description is all that is needed. The report is sent directly to the administrator and does not affect any inspection data.</p>
+
+  <h2>Signing Out</h2>
+  <p>Tap the sign-out icon in the top-right corner of the property list screen. You will be returned to the sign-in screen. Any locally saved inspection data is retained on the device.</p>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SECTION 3 — CONDUCTING AN INSPECTION
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="s3">
+  <div class="section-header">
+    <span class="section-num">03</span>
+    <span class="section-title">Conducting an Inspection</span>
+  </div>
+
+  <h2 id="s3-start">Starting an Inspection</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body"><strong>Select the property</strong> from your property list.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body"><strong>Tap "Start Inspection"</strong>. The timer will begin and the inspection screen will open.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body"><strong>Work through the property</strong> recording observations and photographs as you go. There is no fixed order — move through the building naturally.</div>
+    </div>
+  </div>
+
+  <div class="tip">
+    <div class="tip-label">Tip</div>
+    The screen will remain on throughout the inspection. The app will keep you logged in and active so recordings are never lost mid-inspection.
+  </div>
+
+  <h2 id="s3-narrate">Recording Observations</h2>
+  <p>Observations are recorded by voice. Each voice recording becomes one item in the inspection report.</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body"><strong>Tap and hold the microphone button</strong> to begin recording. Release to stop.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body"><strong>The app transcribes your recording</strong> and uses AI to classify it into the correct inspection section (e.g. Grounds, Stairwells, Roof). A confidence indicator shows how certain the classification is.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body"><strong>Review and confirm</strong> the section. If the AI has placed it in the wrong section, tap the section name to correct it manually.</div>
+    </div>
+  </div>
+
+  <div class="tip">
+    <div class="tip-label">Narration Tips</div>
+    <ul style="margin-top:6px;">
+      <li>Speak clearly and at a normal pace — the AI handles accents well but clarity always helps.</li>
+      <li>Describe what you can <em>see</em>, not just that something is present. For example: <em>"There is a crack approximately 300mm long running horizontally across the render on the south elevation"</em> rather than <em>"there's a crack."</em></li>
+      <li>Include the location in your narration — <em>"on the first floor landing"</em>, <em>"adjacent to the bin store entrance"</em>. The AI uses this context to place the observation in the right section.</li>
+      <li>Each recording should cover one distinct issue or area. Avoid combining unrelated observations in a single recording — the AI will flag recordings that span multiple sections and ask you to split them.</li>
+      <li>You do not need to state the section name — the AI determines this from context.</li>
+    </ul>
+  </div>
+
+  <h2 id="s3-photos">Taking Photographs</h2>
+  <p>Photographs are taken within the inspection screen using the camera button. The app automatically analyses each photograph using AI and associates it with the correct inspection section.</p>
+
+  <div class="warning">
+    <div class="warning-label">Important — Photo Sections</div>
+    Always take photographs while physically in the relevant area. If you are standing in the stairwell, the photograph should be of the stairwell — not of something in an adjacent area. The AI classifies photos based on what it can see in the image. If a photo is placed in the wrong section, you can reassign it manually by tapping the section label on the photo card.
+  </div>
+
+  <h3>Duplicate Photos</h3>
+  <p>If the app detects that three or more photographs have been taken within a two-minute window, it will display a warning banner highlighting potential duplicates. Review the photos and delete any that are redundant using the × button on each thumbnail, or the Delete button in the fullscreen viewer.</p>
+
+  <h2 id="s3-sections">Inspection Sections</h2>
+  <p>The app divides every inspection into twelve standard sections. See <strong>Section 9</strong> of this manual for a full reference. Sections that are not applicable to a property (for example, a property without a car park) can be permanently marked as N/A — the app will remember this for all future inspections at that property.</p>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SECTION 4 — OFFLINE WORKING
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="s4">
+  <div class="section-header">
+    <span class="section-num">04</span>
+    <span class="section-title">Offline Working</span>
+  </div>
+
+  <p>The ASH Inspection App is designed to work in areas with poor or no mobile signal. All inspection data is saved locally on your device as you work.</p>
+
+  <h2>What Works Offline</h2>
+  <ul>
+    <li>Recording and saving voice observations</li>
+    <li>Taking and saving photographs</li>
+    <li>Reviewing observations already recorded in this session</li>
+    <li>Continuing and ending an inspection</li>
+  </ul>
+
+  <h2>What Requires a Connection</h2>
+  <ul>
+    <li><strong>Transcription</strong> — converting your voice recording to text requires a server connection. If you are offline when you record, the audio is saved to the device and transcribed automatically as soon as a connection is restored.</li>
+    <li><strong>Photo analysis</strong> — AI classification of photographs happens in the background after the inspection, once your device is back online.</li>
+    <li><strong>Report generation</strong> — the final report must be generated whilst connected.</li>
+  </ul>
+
+  <div class="tip">
+    <div class="tip-label">Offline Indicator</div>
+    A red banner at the top of the inspection screen indicates that the device is offline. Voice recordings made whilst offline will show a pending status. These are uploaded and transcribed automatically — no action is required from you. The banner clears once the connection is restored and all pending items have been processed.
+  </div>
+
+  <div class="tip">
+    <div class="tip-label">Best Practice</div>
+    Where possible, complete your inspection on-site and return to an area with mobile signal before generating the report. This ensures all photographs have been analysed and all transcriptions are complete before the report is compiled.
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SECTION 5 — COMPLETING AN INSPECTION
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="s5">
+  <div class="section-header">
+    <span class="section-num">05</span>
+    <span class="section-title">Completing an Inspection</span>
+  </div>
+
+  <h2 id="s5-end">Ending the Inspection</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body"><strong>When you have finished recording</strong> all observations and photographs, tap <em>End Inspection</em>.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body"><strong>The app will sync</strong> your data to the server. A progress indicator is shown during this process. Do not close the app during syncing.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body"><strong>The Pre-Report Checklist</strong> will open automatically once syncing is complete.</div>
+    </div>
+  </div>
+
+  <h2 id="s5-checklist">Pre-Report Checklist</h2>
+  <p>The checklist gives you a final overview of all twelve inspection sections before the report is generated. Each section is shown with a status indicator:</p>
+
+  <table>
+    <tr><th>Indicator</th><th>Meaning</th></tr>
+    <tr><td>✅ Green</td><td>The section has observations or photographs recorded.</td></tr>
+    <tr><td>🔵 Blue</td><td>The section has photographs only (no voice narration). The AI will synthesise an observation from the photos.</td></tr>
+    <tr><td>⚠️ Amber</td><td>The section has no observations and no photographs. Review whether this section applies to the property.</td></tr>
+    <tr><td>N/A</td><td>The section has been marked as not applicable. Toggle N/A using the button on each row.</td></tr>
+  </table>
+
+  <h3>Marking a Section as N/A</h3>
+  <p>If a section is amber and genuinely does not apply (e.g. there are no lifts), toggle <em>N/A</em> on that row. For sections such as <em>Car Park</em> and <em>Lifts</em>, the app will ask whether this section is permanently not applicable to the property. Selecting <em>"No, never"</em> saves this setting — the section will be pre-marked N/A on all future inspections at this property. Selecting <em>"Just this once"</em> applies N/A only to the current inspection.</p>
+
+  <h3>Going Back to Edit</h3>
+  <p>If you notice a section that needs attention, tap the <em>Edit</em> button on that row. This returns you to the inspection screen with that section in focus, allowing you to add further observations or photographs before returning to the checklist.</p>
+
+  <h2 id="s5-report">Generating the Report</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body"><strong>When the checklist is satisfactory</strong>, tap <em>Generate Report</em>.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body"><strong>The app processes your inspection</strong> — observations are refined, an overall summary is generated, and recurring issues from the previous inspection are identified. This typically takes 30–90 seconds.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body"><strong>The completed report</strong> is emailed to you automatically as both a Word document and a PDF. The email arrives at the address you registered with.</div>
+    </div>
+  </div>
+
+  <div class="tip">
+    <div class="tip-label">What the Report Contains</div>
+    <ul style="margin-top:6px;">
+      <li>Property and inspection details (date, time, inspector, weather)</li>
+      <li>Overall condition summary</li>
+      <li>Observations by section, each with risk level and recommended action</li>
+      <li>Recurring items carried over from the previous inspection</li>
+      <li>Photographic appendix</li>
+      <li>Declaration and signature block</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SECTION 6 — TIPS FOR BEST RESULTS
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="s6">
+  <div class="section-header">
+    <span class="section-num">06</span>
+    <span class="section-title">Tips for Best Results</span>
+  </div>
+
+  <h2>Narration</h2>
+
+  <h3>Be Specific and Descriptive</h3>
+  <p>The quality of the final report is directly related to the quality of your narration. The AI processes your words into professional report language, but it can only work with the detail you provide. Measurements, locations, severity, and context all improve the output significantly.</p>
+
+  <table>
+    <tr><th>Instead of…</th><th>Try…</th></tr>
+    <tr><td>"There's some damp on the wall."</td><td>"There is a damp patch approximately 400mm in diameter on the internal face of the north wall on the ground floor communal corridor, adjacent to the entrance lobby."</td></tr>
+    <tr><td>"The lights aren't working."</td><td>"Two of the four fluorescent light fittings on the second floor landing are not operational."</td></tr>
+    <tr><td>"The car park needs sweeping."</td><td>"The car park surface has a significant accumulation of leaf debris and litter, particularly in the north-east corner adjacent to the boundary wall."</td></tr>
+    <tr><td>"Graffiti on the wall."</td><td>"There is graffiti on the east-facing rendered wall of the bin store, approximately 1 metre in width and 0.5 metres in height."</td></tr>
+  </table>
+
+  <h3>One Issue Per Recording</h3>
+  <p>Record each distinct defect or observation separately. If you combine multiple issues in one recording, the AI will attempt to split them — but separate recordings are cleaner and produce better results.</p>
+
+  <h3>State the Action if Known</h3>
+  <p>If you already know what action is needed, say it. For example: <em>"This will require a contractor to inspect and re-point the brickwork."</em> The AI will use this to populate the action column in the report.</p>
+
+  <h2>Photography</h2>
+
+  <h3>Take Photos in the Right Location</h3>
+  <p>The AI classifies photographs based on visual content. Always photograph the subject relevant to the section you are currently inspecting. A photograph taken in the bin store area should show the bin store — not an adjacent wall that belongs to a different section.</p>
+
+  <h3>One Photo Per Issue</h3>
+  <p>For each defect, one clear photograph is usually sufficient. Multiple photos of the exact same thing from the same angle add no value and may trigger the duplicate warning. However, multiple angles of a complex defect (e.g. a large crack photographed close-up and then in context) are helpful.</p>
+
+  <h3>Photo Quality</h3>
+  <ul>
+    <li>Ensure adequate lighting — flash or natural light where possible.</li>
+    <li>Hold the phone steady and allow a moment for the camera to focus.</li>
+    <li>Step back to provide context where the defect is part of a larger area.</li>
+    <li>Landscape orientation works well for elevation shots; portrait for close-ups.</li>
+  </ul>
+
+  <h3>Mixing Narration and Photos</h3>
+  <p>For best results, use both narration and photographs together. A narration without a photo is valid, and a photo without narration is valid (the AI will synthesise an observation from the image), but where a defect is significant, both together produce the most thorough report entry.</p>
+
+  <h2>Photo-Only Inspections</h2>
+  <p>It is possible to conduct an inspection using photographs only, without recording any voice narrations. In this mode, the AI will analyse each photograph, determine which section it belongs to, and automatically write a professional observation for inclusion in the report.</p>
+
+  <div class="warning">
+    <div class="warning-label">Strongly Recommended — Use Narration Alongside Photos</div>
+    <p>Photo-only inspections produce a usable report, but the AI is limited to what it can visually observe in the image. It cannot know the full context of a defect, how long it has been present, whether it has worsened, or what specific action you intend to recommend.</p>
+    <p style="margin-top:8px;">Reports generated from photos alone are likely to require <strong>significantly more editing</strong> before they are ready to send to a client. Voice narrations take only a few seconds per observation and result in a far more accurate and detailed report. <strong>Narration is always the preferred method.</strong></p>
+  </div>
+
+  <p>If you do conduct a photo-only inspection, the pre-report checklist will show a blue indicator for sections covered by photographs only. You will still be able to add narrations via the Edit button before generating the report if you wish to supplement the photos.</p>
+
+  <h2>General Workflow</h2>
+  <ul>
+    <li><strong>Work systematically.</strong> Move through the property section by section to avoid missing areas. The app's inspection sections follow a logical exterior-to-interior order (see Section 9).</li>
+    <li><strong>Record as you go.</strong> Do not wait until you return to the office — record observations on the spot while the detail is fresh.</li>
+    <li><strong>Check the checklist carefully.</strong> Before generating the report, review each amber section on the pre-report checklist and confirm that missing sections are intentional.</li>
+    <li><strong>Allow time for the report.</strong> Report generation takes up to 90 seconds. Stay on the screen until you see the confirmation message.</li>
+  </ul>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SECTION 7 — ADMIN DASHBOARD
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="s7">
+  <div class="section-header">
+    <span class="section-num">07</span>
+    <span class="section-title">Admin Dashboard</span>
+  </div>
+
+  <p>The Admin Dashboard is a web-based monitoring tool for use by the firm's management. It is not part of the Android app and is accessed via a web browser.</p>
+
+  <h2>Accessing the Dashboard</h2>
+  <p>Open a web browser and navigate to:</p>
+  <p style="font-family:monospace; background:#f1f5f9; padding:10px 14px; border-radius:4px; margin:10px 0;">
+    https://ash-inspection-app-production.up.railway.app/admin
+  </p>
+  <p>You will be prompted for a username and password. Enter the administrator credentials provided to you separately. The dashboard is not accessible without these credentials.</p>
+
+  <h2>Dashboard Tabs</h2>
+
+  <table>
+    <tr><th>Tab</th><th>What It Shows</th></tr>
+    <tr><td><strong>Live Inspections</strong></td><td>Any inspection currently in progress — who is conducting it, which property, start time, and how long they have been on site. Refreshes automatically every 30 seconds.</td></tr>
+    <tr><td><strong>Recent Inspections</strong></td><td>The last 25 completed inspections, with links to download the PDF report where one has been generated.</td></tr>
+    <tr><td><strong>Inspectors</strong></td><td>All registered Property Managers, their email addresses, job titles, and the date of their last inspection.</td></tr>
+    <tr><td><strong>Properties</strong></td><td>The full property portfolio with address, number of units, managing PM, and property features (car park, lift, roof access).</td></tr>
+    <tr><td><strong>Bug Reports</strong></td><td>All issues and suggestions submitted by PMs via the in-app report button.</td></tr>
+    <tr><td><strong>Costs &amp; Usage</strong></td><td>AI API usage and cost tracking — total spend, breakdown by service and endpoint, monthly trends, and a full call log. A CSV export is available for financial reporting.</td></tr>
+  </table>
+
+  <h2>Summary Statistics</h2>
+  <p>Across the top of the dashboard, six summary cards show at a glance: total properties, registered inspectors, inspections currently active, inspections completed this month, reports generated to date, and bug reports submitted.</p>
+
+  <h2>Downloading a Financial Report</h2>
+  <p>On the <em>Costs &amp; Usage</em> tab, click <em>Download CSV</em> to export a full log of all API calls with timestamps, token counts, audio durations, and cost in USD. This file can be opened in Excel for financial reporting or expense reconciliation.</p>
+
+  <div class="tip">
+    <div class="tip-label">Note on Costs</div>
+    API costs are charged in USD and are typically very small per inspection — a standard inspection with narration and photographs costs in the region of $0.05–$0.20 depending on the number of observations and photos. These are third-party charges from Anthropic (AI) and Deepgram (speech-to-text).
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SECTION 8 — TROUBLESHOOTING
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="s8">
+  <div class="section-header">
+    <span class="section-num">08</span>
+    <span class="section-title">Troubleshooting</span>
+  </div>
+
+  <table>
+    <tr><th>Issue</th><th>Solution</th></tr>
+    <tr>
+      <td><strong>I did not receive a confirmation email when registering.</strong></td>
+      <td>Check your spam or junk folder. If it is not there, wait two minutes and try again. If the problem persists, contact your administrator who can resend the confirmation from Supabase.</td>
+    </tr>
+    <tr>
+      <td><strong>My name does not appear in the registration list.</strong></td>
+      <td>Your name must be added to the approved list by the administrator before you can register. Contact your manager.</td>
+    </tr>
+    <tr>
+      <td><strong>The app says "Account already exists" for my name.</strong></td>
+      <td>An account has already been created for your name. If this was not you, contact your administrator immediately. If you have forgotten your password, return to the sign-in screen and use <em>Forgot password?</em></td>
+    </tr>
+    <tr>
+      <td><strong>A voice recording failed to transcribe.</strong></td>
+      <td>If the device was offline at the time, the recording is saved and will be transcribed automatically when a connection is available. An orange warning banner indicates pending transcriptions. If online, try recording again — occasionally the server takes a moment to respond.</td>
+    </tr>
+    <tr>
+      <td><strong>The offline warning banner is showing but I have signal.</strong></td>
+      <td>The app detected a connection loss during the session. Tap <em>Retry</em> if visible, or wait — the banner clears automatically once the connection is confirmed stable.</td>
+    </tr>
+    <tr>
+      <td><strong>A photo was placed in the wrong section.</strong></td>
+      <td>Tap the section label on the photo card in the inspection screen to manually reassign it to the correct section.</td>
+    </tr>
+    <tr>
+      <td><strong>I see a duplicate photo warning.</strong></td>
+      <td>The app has detected three or more photos taken within two minutes. Review the photos in the flagged group and delete any that are identical or redundant using the × button on each thumbnail.</td>
+    </tr>
+    <tr>
+      <td><strong>Report generation failed.</strong></td>
+      <td>Ensure you have a stable internet connection and try again. If the problem persists, use the <em>Report issue</em> button on the property list screen to notify the administrator with a description of what happened.</td>
+    </tr>
+    <tr>
+      <td><strong>I did not receive the report email.</strong></td>
+      <td>Check your spam folder. The email is sent from <em>reports@propertyappdev.co.uk</em>. If you do not receive it within five minutes of generating the report, contact your administrator.</td>
+    </tr>
+    <tr>
+      <td><strong>The app has frozen or crashed.</strong></td>
+      <td>Close and reopen the app. Your inspection data is saved locally and will not be lost. If the problem recurs, submit a bug report via the property list screen.</td>
+    </tr>
+    <tr>
+      <td><strong>I cannot see one of my properties.</strong></td>
+      <td>Properties are assigned by the administrator. If a property is missing, contact your manager to confirm it has been added to the system.</td>
+    </tr>
+  </table>
+
+  <div class="tip">
+    <div class="tip-label">Reporting Issues</div>
+    For any issue not covered above, use the <em>Report issue</em> button on the property list screen. Your report is sent directly to the administrator and flagged immediately. Please include as much detail as possible — what you were doing when the issue occurred, which property and inspection were involved, and what you expected to happen.
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SECTION 9 — INSPECTION SECTIONS REFERENCE
+══════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="s9">
+  <div class="section-header">
+    <span class="section-num">09</span>
+    <span class="section-title">Inspection Sections Reference</span>
+  </div>
+
+  <p>The app divides every inspection into twelve standard sections. They are listed below in the order they appear in the report, which broadly follows an exterior-to-interior walkthrough.</p>
+
+  <table>
+    <tr><th>#</th><th>Section</th><th>What to Record</th></tr>
+    <tr>
+      <td>1</td>
+      <td><strong>External Approach &amp; Entrance</strong></td>
+      <td>Pathways, steps, ramps, gates, signage, lighting, and the main entrance door and surround approaching the building.</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><strong>Grounds &amp; Landscaping</strong></td>
+      <td>Condition of lawns, planting, boundary walls and fencing, drainage gullies, litter, and any external site furniture.</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td><strong>Bin Store &amp; Waste Facilities</strong></td>
+      <td>Bin store structure, doors, cleanliness, bin provision, recycling facilities, and any fly-tipping.</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td><strong>Car Park</strong></td>
+      <td>Surface condition, line markings, lighting, drainage, barriers, signage, and security. <em>Mark N/A if the property has no car park.</em></td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td><strong>External Fabric &amp; Elevations</strong></td>
+      <td>Condition of the building's external walls, render, cladding, windows, doors, guttering, downpipes, and soffits.</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td><strong>Roof</strong></td>
+      <td>Visible roof covering, flashings, chimney stacks, parapet walls, rooflights, and any plant equipment at roof level. Record from ground level or from roof access if available.</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td><strong>Communal Entrance &amp; Reception</strong></td>
+      <td>Internal entrance lobby, entry system, post boxes, noticeboards, flooring, walls, ceiling, lighting, and fire door.</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td><strong>Stairwells &amp; Circulation</strong></td>
+      <td>All internal common stairs, landings, balustrades, handrails, flooring, walls, ceilings, lighting, and fire doors on each level.</td>
+    </tr>
+    <tr>
+      <td>9</td>
+      <td><strong>Lifts</strong></td>
+      <td>Lift car condition, doors, controls, certification, and any faults reported. <em>Mark N/A if the property has no lift.</em></td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td><strong>Plant Room &amp; Utilities</strong></td>
+      <td>Boiler room, water tanks, electrical intake, meter cupboards, fire alarm panel, and any communal plant or equipment.</td>
+    </tr>
+    <tr>
+      <td>11</td>
+      <td><strong>Meter Reads</strong></td>
+      <td>Record electricity, gas, and water meter readings. Photograph each meter display clearly so the reading is legible — these images are sent to the energy broker. Note the meter serial number if visible. <em>Mark N/A if meters are not accessible during the inspection.</em></td>
+    </tr>
+    <tr>
+      <td>12</td>
+      <td><strong>Internal Communal Areas</strong></td>
+      <td>Any communal indoor areas not covered above — corridors, common rooms, laundry rooms, storage, cycle stores, etc.</td>
+    </tr>
+    <tr>
+      <td>13</td>
+      <td><strong>Additional / Property-Specific</strong></td>
+      <td>Anything unique to the property that does not fit the sections above — for example a private garden, a concierge facility, or a commercial unit.</td>
+    </tr>
+  </table>
+
+  <div class="tip">
+    <div class="tip-label">Tip</div>
+    Not every section will be relevant to every property. Use N/A for sections that genuinely do not apply rather than leaving them blank. This ensures the checklist is accurate and the report is not padded with empty sections.
+  </div>
+
+  <p style="margin-top:40px; padding-top:20px; border-top:1px solid var(--border); color:var(--light); font-size:9pt; text-align:center;">
+    ASH Chartered Surveyors &nbsp;·&nbsp; 1-5 Kew Place, Cheltenham GL53 7NQ &nbsp;·&nbsp; T: 01242 237274 &nbsp;·&nbsp; ashproperty.co.uk
+  </p>
+</div>
+
+</body>
+</html>

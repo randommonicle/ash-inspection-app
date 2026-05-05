@@ -12,7 +12,8 @@ Standard sections:
 - communal_entrance — lobby, reception, post boxes, notice board, fire action notice, entrance hall, internal main door, floor in entrance
 - stairwells — stairs, stairwell, staircase, landing, handrail, balustrade, fire door, door closer, corridor, emergency light on stairs, floor on landing
 - lifts — lift, elevator, lift car, lift doors, lift panel
-- plant_room — plant room, boiler, tank, pump, electrical board, fuse board, fire alarm panel, meter cupboard, utilities room, comms room
+- plant_room — plant room, boiler, tank, pump, electrical board, fuse board, fire alarm panel, utilities room, comms room
+- meter_reads — meter reading, electricity meter, gas meter, water meter, utility meter, meter box, meter cupboard, kWh, cubic metres, meter number, serial number, meter read, submit reading, energy broker
 - internal_communal — internal corridor, internal hallway, internal decoration, ceiling inside, general inside condition
 - additional — anything that does not fit the above sections
 
