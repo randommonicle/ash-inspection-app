@@ -12,6 +12,47 @@ interface Props {
 }
 
 export function PreReportChecklist({ property, observations, onConfirm, onCancel, onEditSection }: Props) {
+  // Photos-only mode: no narrations recorded — skip the full checklist and show
+  // a simple confirmation. The server will synthesise sections from Opus photo
+  // descriptions, so the inspector doesn't need to resolve anything manually.
+  if (observations.length === 0) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col bg-black/50">
+        <div className="mt-auto bg-white rounded-t-2xl flex flex-col" style={{ maxHeight: '90vh' }}>
+          <div className="flex justify-center pt-3 pb-1 shrink-0">
+            <div className="w-10 h-1 bg-gray-200 rounded-full" />
+          </div>
+          <div className="px-5 pt-2 pb-6 flex flex-col gap-4">
+            <div>
+              <h2 className="text-lg font-bold text-ash-navy">Generate from Photos</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                No narrations were recorded. The report will be generated from your photos — each
+                image will be automatically classified into the relevant section and described by AI.
+              </p>
+              <p className="text-sm text-gray-400 mt-2">
+                You can add narrations and regenerate at any time if more detail is needed.
+              </p>
+            </div>
+            <div className="flex gap-3 pb-4">
+              <button
+                onClick={onCancel}
+                className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm active:bg-gray-50 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onConfirm}
+                className="flex-1 py-3 rounded-xl bg-ash-navy text-white font-bold text-sm active:scale-[0.98] transition"
+              >
+                Generate from Photos →
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // Count observations per section
   const countsBySection = SECTION_ORDER.reduce<Record<SectionKey, number>>((acc, key) => {
     acc[key] = observations.filter(o => o.section_key === key).length
