@@ -105,6 +105,14 @@ export interface LocalPhoto {
   local_path: string       // filesystem URI
   web_path?: string        // Capacitor.convertFileSrc result for display
   caption?: string
+  section_key?: string     // Opus-assigned section, written back after sync
   synced: boolean
+  created_at: string
+}
+
+export interface PendingTranscription {
+  id: string
+  inspection_id: string
+  audio_path: string       // filesystem URI of saved audio blob
   created_at: string
 }

@@ -1,5 +1,5 @@
 import { CapacitorSQLite, SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite'
-import type { LocalInspection, LocalObservation, LocalPhoto, SectionKey } from '../types'
+import type { LocalInspection, LocalObservation, LocalPhoto, PendingTranscription, SectionKey } from '../types'
 
 const DB_NAME    = 'ash_inspections'
 const DB_VERSION = 1
@@ -44,8 +44,17 @@ const CREATE_TABLES = `
     local_path     TEXT NOT NULL,
     web_path       TEXT,
     caption        TEXT,
+    section_key    TEXT,
     synced         INTEGER NOT NULL DEFAULT 0,
     created_at     TEXT NOT NULL,
+    FOREIGN KEY (inspection_id) REFERENCES inspections(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS pending_transcriptions (
+    id            TEXT PRIMARY KEY NOT NULL,
+    inspection_id TEXT NOT NULL,
+    audio_path    TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
     FOREIGN KEY (inspection_id) REFERENCES inspections(id) ON DELETE CASCADE
   );
 `
@@ -69,6 +78,7 @@ export async function initDatabase(): Promise<void> {
   // is not standard SQLite, so we catch the "duplicate column" error silently).
   const migrations = [
     `ALTER TABLE inspections ADD COLUMN report_sent INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE photos ADD COLUMN section_key TEXT`,
   ]
   for (const sql of migrations) {
     try { await db.execute(sql) } catch { /* column already exists */ }
@@ -266,8 +276,8 @@ export async function createPhoto(params: {
   return photo
 }
 
-export async function updatePhotoCaption(id: string, caption: string): Promise<void> {
-  await getDB().run(`UPDATE photos SET caption=? WHERE id=?`, [caption, id])
+export async function updatePhotoAnalysis(id: string, caption: string, sectionKey?: string): Promise<void> {
+  await getDB().run(`UPDATE photos SET caption=?, section_key=? WHERE id=?`, [caption, sectionKey ?? null, id])
 }
 
 export async function getPhotosForInspection(inspection_id: string): Promise<LocalPhoto[]> {
@@ -286,7 +296,40 @@ function rowToPhoto(row: Record<string, unknown>): LocalPhoto {
     local_path: row.local_path as string,
     web_path: row.web_path as string | undefined,
     caption: row.caption as string | undefined,
+    section_key: row.section_key as string | undefined,
     synced: (row.synced as number) === 1,
     created_at: row.created_at as string,
   }
+}
+
+// ─── Pending transcriptions ───────────────────────────────────────────────────
+
+export async function createPendingTranscription(params: {
+  inspection_id: string
+  audio_path: string
+}): Promise<PendingTranscription> {
+  const now = new Date().toISOString()
+  const pt: PendingTranscription = { id: uuid(), ...params, created_at: now }
+  await getDB().run(
+    `INSERT INTO pending_transcriptions (id, inspection_id, audio_path, created_at) VALUES (?, ?, ?, ?)`,
+    [pt.id, pt.inspection_id, pt.audio_path, pt.created_at]
+  )
+  return pt
+}
+
+export async function getPendingTranscriptions(inspection_id: string): Promise<PendingTranscription[]> {
+  const result = await getDB().query(
+    `SELECT * FROM pending_transcriptions WHERE inspection_id=? ORDER BY created_at ASC`,
+    [inspection_id]
+  )
+  return (result.values ?? []).map(row => ({
+    id:            row.id as string,
+    inspection_id: row.inspection_id as string,
+    audio_path:    row.audio_path as string,
+    created_at:    row.created_at as string,
+  }))
+}
+
+export async function deletePendingTranscription(id: string): Promise<void> {
+  await getDB().run(`DELETE FROM pending_transcriptions WHERE id=?`, [id])
 }

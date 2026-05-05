@@ -6,7 +6,7 @@ import {
   getObservationsForInspection,
   getPhotosForInspection,
   markInspectionSynced,
-  updatePhotoCaption,
+  updatePhotoAnalysis,
 } from '../db/database'
 import type { LocalInspection } from '../types'
 
@@ -30,13 +30,13 @@ async function triggerOpusAnalysis(photoId: string, storagePath: string): Promis
   // Write the suggested_caption back to local SQLite so the fullscreen viewer
   // can show it without needing a separate Supabase fetch.
   try {
-    const result = await res.json() as { suggested_caption?: string }
-    if (result.suggested_caption) {
-      await updatePhotoCaption(photoId, result.suggested_caption)
-      console.log(`[SYNC] Caption saved locally for ${photoId}: "${result.suggested_caption}"`)
+    const result = await res.json() as { suggested_caption?: string; section_key?: string }
+    if (result.suggested_caption || result.section_key) {
+      await updatePhotoAnalysis(photoId, result.suggested_caption ?? '', result.section_key)
+      console.log(`[SYNC] Analysis saved locally for ${photoId}: section=${result.section_key ?? '?'}, caption="${result.suggested_caption ?? ''}"`)
     }
   } catch {
-    // Non-fatal — caption just won't show in the viewer for this photo
+    // Non-fatal — caption and section_key just won't be available locally for this photo
   }
 }
 

@@ -493,7 +493,10 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     // ── 6. Generate summary + fetch weather concurrently ─────────────────────
     const [overallSummary, weatherStr] = await Promise.all([
       processedObservations.length > 0
-        ? generateSummary(processedObservations)
+        ? generateSummary(processedObservations).catch((err) => {
+            console.warn('[REPORT] Summary generation failed (non-fatal):', err instanceof Error ? err.message : err)
+            return 'Overall condition summary could not be generated automatically. Please review the observations and actions recorded below.'
+          })
         : Promise.resolve('No observations were recorded during this inspection.'),
       getWeatherForInspection(propertyAddress, inspection.start_time),
     ])

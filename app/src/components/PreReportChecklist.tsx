@@ -1,61 +1,28 @@
 import { useState } from 'react'
-import type { LocalObservation, Property, SectionKey } from '../types'
+import type { LocalObservation, LocalPhoto, Property, SectionKey } from '../types'
 import { SECTION_LABELS, SECTION_ORDER } from '../types'
 
 interface Props {
   property: Property
   inspectionId: string
   observations: LocalObservation[]
+  photos: LocalPhoto[]
   onConfirm: () => void
   onCancel: () => void
   onEditSection: (sectionKey: SectionKey) => void
 }
 
-export function PreReportChecklist({ property, observations, onConfirm, onCancel, onEditSection }: Props) {
-  // Photos-only mode: no narrations recorded — skip the full checklist and show
-  // a simple confirmation. The server will synthesise sections from Opus photo
-  // descriptions, so the inspector doesn't need to resolve anything manually.
-  if (observations.length === 0) {
-    return (
-      <div className="fixed inset-0 z-50 flex flex-col bg-black/50">
-        <div className="mt-auto bg-white rounded-t-2xl flex flex-col" style={{ maxHeight: '90vh' }}>
-          <div className="flex justify-center pt-3 pb-1 shrink-0">
-            <div className="w-10 h-1 bg-gray-200 rounded-full" />
-          </div>
-          <div className="px-5 pt-2 pb-6 flex flex-col gap-4">
-            <div>
-              <h2 className="text-lg font-bold text-ash-navy">Generate from Photos</h2>
-              <p className="text-sm text-gray-500 mt-1">
-                No narrations were recorded. The report will be generated from your photos — each
-                image will be automatically classified into the relevant section and described by AI.
-              </p>
-              <p className="text-sm text-gray-400 mt-2">
-                You can add narrations and regenerate at any time if more detail is needed.
-              </p>
-            </div>
-            <div className="flex gap-3 pb-4">
-              <button
-                onClick={onCancel}
-                className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold text-sm active:bg-gray-50 transition"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={onConfirm}
-                className="flex-1 py-3 rounded-xl bg-ash-navy text-white font-bold text-sm active:scale-[0.98] transition"
-              >
-                Generate from Photos →
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
+export function PreReportChecklist({ property, observations, photos, onConfirm, onCancel, onEditSection }: Props) {
   // Count observations per section
   const countsBySection = SECTION_ORDER.reduce<Record<SectionKey, number>>((acc, key) => {
     acc[key] = observations.filter(o => o.section_key === key).length
+    return acc
+  }, {} as Record<SectionKey, number>)
+
+  // Count synced photos with an Opus-assigned section_key per section.
+  // Only synced photos are counted — unsynced ones haven't been analysed by Opus yet.
+  const photosBySection = SECTION_ORDER.reduce<Record<SectionKey, number>>((acc, key) => {
+    acc[key] = photos.filter(p => p.synced && p.section_key === key).length
     return acc
   }, {} as Record<SectionKey, number>)
 
@@ -83,7 +50,9 @@ export function PreReportChecklist({ property, observations, onConfirm, onCancel
     })
   }
 
-  const warningKeys = SECTION_ORDER.filter(key => countsBySection[key] === 0 && !naSet.has(key))
+  const warningKeys = SECTION_ORDER.filter(key =>
+    countsBySection[key] === 0 && photosBySection[key] === 0 && !naSet.has(key)
+  )
   const allOk = warningKeys.length === 0
 
   return (
@@ -111,51 +80,56 @@ export function PreReportChecklist({ property, observations, onConfirm, onCancel
         {/* Section list */}
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
           {SECTION_ORDER.map(key => {
-            const count  = countsBySection[key]
-            const hasObs = count > 0
-            const isNA   = naSet.has(key)
-            const isWarn = !hasObs && !isNA
+            const obsCount   = countsBySection[key]
+            const photoCount = photosBySection[key]
+            const hasObs     = obsCount > 0
+            const hasPhotos  = photoCount > 0
+            const covered    = hasObs || hasPhotos
+            const isNA       = naSet.has(key)
+            const isWarn     = !covered && !isNA
 
             return (
               <div
                 key={key}
                 className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border ${
-                  hasObs ? 'border-green-100 bg-green-50'
+                  covered ? 'border-green-100 bg-green-50'
                   : isNA  ? 'border-gray-100 bg-gray-50'
                   :         'border-amber-100 bg-amber-50'
                 }`}
               >
                 {/* Status badge */}
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                  hasObs  ? 'bg-green-500 text-white'
+                  covered ? 'bg-green-500 text-white'
                   : isNA  ? 'bg-gray-300 text-gray-600'
                   :         'bg-amber-400 text-white'
                 }`}>
-                  {hasObs ? '✓' : isNA ? '—' : '!'}
+                  {covered ? '✓' : isNA ? '—' : '!'}
                 </div>
 
                 {/* Label + subtext */}
                 <div className="flex-1 min-w-0">
                   <p className={`text-sm font-medium truncate ${
-                    isNA && !hasObs ? 'text-gray-400' : 'text-gray-800'
+                    isNA && !covered ? 'text-gray-400' : 'text-gray-800'
                   }`}>
                     {SECTION_LABELS[key]}
                   </p>
                   {hasObs && (
-                    <p className="text-xs text-gray-400">{count} observation{count !== 1 ? 's' : ''}</p>
+                    <p className="text-xs text-gray-400">{obsCount} observation{obsCount !== 1 ? 's' : ''}{hasPhotos ? `, ${photoCount} photo${photoCount !== 1 ? 's' : ''}` : ''}</p>
+                  )}
+                  {!hasObs && hasPhotos && (
+                    <p className="text-xs text-green-600">{photoCount} photo{photoCount !== 1 ? 's' : ''} — AI will describe</p>
                   )}
                   {isWarn && (
-                    <p className="text-xs text-amber-600">No observations recorded</p>
+                    <p className="text-xs text-amber-600">No observations or photos</p>
                   )}
-                  {isNA && !hasObs && (
+                  {isNA && !covered && (
                     <p className="text-xs text-gray-400">Not applicable</p>
                   )}
                 </div>
 
-                {/* Action buttons — only for sections with no observations */}
-                {!hasObs && (
+                {/* Action buttons — only for uncovered sections */}
+                {!covered && (
                   <div className="flex gap-1.5 shrink-0">
-                    {/* Edit — go back to inspection, jump to this section */}
                     {isWarn && (
                       <button
                         onClick={() => onEditSection(key)}
@@ -164,7 +138,6 @@ export function PreReportChecklist({ property, observations, onConfirm, onCancel
                         Edit
                       </button>
                     )}
-                    {/* N/A toggle */}
                     <button
                       onClick={() => toggleNA(key)}
                       className={`text-xs px-2.5 py-1 rounded-lg font-semibold transition active:scale-95 ${

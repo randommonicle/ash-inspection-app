@@ -18,6 +18,7 @@ import {
   createObservation, getObservationsForInspection,
   updateObservationSection, appendObservationNarration,
   createPhoto, getPhotosForInspection,
+  createPendingTranscription, getPendingTranscriptions, deletePendingTranscription,
 } from '../db/database'
 import {
   SECTION_LABELS, SECTION_TEMPLATE_ORDER,
@@ -59,6 +60,11 @@ export function ActiveInspectionScreen() {
   // "Add more" — when set, the next recording appends to this observation
   const [appendingToId, setAppendingToId] = useState<string | null>(null)
 
+  // Offline audio queue
+  const [pendingCount, setPendingCount]   = useState(0)
+  const [retrying, setRetrying]           = useState(false)
+  const prevOnlineRef                     = useRef(true)
+
   const feedRef      = useRef<HTMLDivElement>(null)
   const startTimeRef = useRef<number>(Date.now())
 
@@ -77,6 +83,7 @@ export function ActiveInspectionScreen() {
     })
     getObservationsForInspection(inspectionId).then(setObservations)
     getPhotosForInspection(inspectionId).then(setPhotos)
+    getPendingTranscriptions(inspectionId).then(pts => setPendingCount(pts.length))
   }, [inspectionId])
 
   useEffect(() => {
@@ -109,6 +116,46 @@ export function ActiveInspectionScreen() {
     return obs
   }, [inspectionId, inspection])
 
+  const retryPendingTranscriptions = useCallback(async () => {
+    if (!inspectionId) return
+    const queue = await getPendingTranscriptions(inspectionId)
+    if (queue.length === 0) return
+
+    setRetrying(true)
+    for (const pt of queue) {
+      try {
+        const { data: base64 } = await Filesystem.readFile({ path: pt.audio_path })
+        const binaryStr = atob(base64 as string)
+        const bytes = new Uint8Array(binaryStr.length)
+        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
+        const blob = new Blob([bytes], { type: 'audio/webm' })
+
+        const transcript = await transcribeAudio(blob)
+        if (transcript) {
+          let result
+          try { result = await classifyNarration(transcript) }
+          catch { result = { section_key: 'additional' as const, confidence: 'low' as const, split_required: false } }
+          await saveObservation(transcript, result.section_key, 'auto')
+        }
+        await deletePendingTranscription(pt.id)
+        await Filesystem.deleteFile({ path: pt.audio_path }).catch(() => {})
+      } catch {
+        // Still offline or transient failure — leave in queue
+      }
+    }
+    const remaining = await getPendingTranscriptions(inspectionId)
+    setPendingCount(remaining.length)
+    setRetrying(false)
+  }, [inspectionId, saveObservation])
+
+  // Auto-retry queued recordings when network comes back
+  useEffect(() => {
+    if (online && !prevOnlineRef.current) {
+      retryPendingTranscriptions()
+    }
+    prevOnlineRef.current = online
+  }, [online, retryPendingTranscriptions])
+
   const handleRecordingComplete = useCallback(async (blob: Blob) => {
     if (!inspectionId || !profile || !inspection) return
     setIsTranscribing(true)
@@ -117,6 +164,24 @@ export function ActiveInspectionScreen() {
     // Capture and clear append mode before any async work
     const targetId = appendingToId
     setAppendingToId(null)
+
+    // Save audio to disk before transcribing so we can retry later if offline
+    let savedAudioPath: string | null = null
+    let keepAudio = false
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve((reader.result as string).split(',')[1])
+        reader.onerror = reject
+        reader.readAsDataURL(blob)
+      })
+      const filename = `audio_${Date.now()}.webm`
+      await Filesystem.writeFile({ path: filename, data: base64, directory: Directory.Documents })
+      const { uri } = await Filesystem.getUri({ path: filename, directory: Directory.Documents })
+      savedAudioPath = uri
+    } catch {
+      // Non-fatal — proceed without offline retry capability
+    }
 
     try {
       const transcript = await transcribeAudio(blob)
@@ -179,9 +244,19 @@ export function ActiveInspectionScreen() {
 
       await saveObservation(transcript, result.section_key, 'auto')
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Transcription failed')
+      if (savedAudioPath) {
+        await createPendingTranscription({ inspection_id: inspectionId, audio_path: savedAudioPath })
+        setPendingCount(prev => prev + 1)
+        keepAudio = true
+        setError('No connection — audio saved. Will transcribe when back online.')
+      } else {
+        setError(err instanceof Error ? err.message : 'Transcription failed')
+      }
     } finally {
       setIsTranscribing(false)
+      if (!keepAudio && savedAudioPath) {
+        await Filesystem.deleteFile({ path: savedAudioPath }).catch(() => {})
+      }
     }
   }, [inspectionId, profile, inspection, saveObservation, appendingToId])
 
@@ -345,6 +420,22 @@ export function ActiveInspectionScreen() {
               Change section
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Queued recordings banner */}
+      {pendingCount > 0 && (
+        <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex-shrink-0 flex items-center gap-2">
+          {retrying
+            ? <div className="w-3 h-3 border-2 border-amber-500 border-t-transparent rounded-full animate-spin shrink-0" />
+            : <span className="text-amber-500 text-sm shrink-0">⏳</span>
+          }
+          <p className="text-amber-700 text-xs">
+            {retrying
+              ? `Retrying ${pendingCount} queued recording${pendingCount !== 1 ? 's' : ''}…`
+              : `${pendingCount} recording${pendingCount !== 1 ? 's' : ''} queued — will transcribe when back online`
+            }
+          </p>
         </div>
       )}
 
