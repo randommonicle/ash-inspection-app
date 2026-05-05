@@ -1,8 +1,10 @@
 import { useState, FormEvent } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 
 export function LoginScreen() {
   const { signIn } = useAuth()
+  const navigate = useNavigate()
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [error, setError]       = useState('')
@@ -104,7 +106,17 @@ export function LoginScreen() {
           </button>
         </form>
 
-        <p className="text-center text-white/25 text-xs mt-12">
+        <div className="mt-8 text-center">
+          <p className="text-ash-light text-sm">New to the app?</p>
+          <button
+            onClick={() => navigate('/register')}
+            className="text-white font-semibold text-sm underline underline-offset-2 mt-1 active:opacity-60"
+          >
+            Create an account
+          </button>
+        </div>
+
+        <p className="text-center text-white/25 text-xs mt-8">
           ASH Chartered Surveyors · 1-5 Kew Place · Cheltenham GL53 7NQ
         </p>
       </div>

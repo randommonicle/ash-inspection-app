@@ -4,6 +4,7 @@ import { App as CapApp } from '@capacitor/app'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { LoadingSpinner } from './components/LoadingSpinner'
 import { LoginScreen } from './screens/LoginScreen'
+import { RegisterScreen } from './screens/RegisterScreen'
 import { PropertyListScreen } from './screens/PropertyListScreen'
 import { PropertyDetailScreen } from './screens/PropertyDetailScreen'
 import { ActiveInspectionScreen } from './screens/ActiveInspectionScreen'
@@ -15,7 +16,7 @@ function BackButtonHandler() {
 
   useEffect(() => {
     const handler = CapApp.addListener('backButton', () => {
-      const roots = ['/properties', '/login']
+      const roots = ['/properties', '/login', '/register']
       if (roots.includes(location.pathname)) {
         CapApp.exitApp()
       } else {
@@ -46,6 +47,10 @@ function AppRoutes() {
         <Route
           path="/login"
           element={session ? <Navigate to="/properties" replace /> : <LoginScreen />}
+        />
+        <Route
+          path="/register"
+          element={session ? <Navigate to="/properties" replace /> : <RegisterScreen />}
         />
         <Route
           path="/properties"

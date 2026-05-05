@@ -2,12 +2,14 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../contexts/AuthContext'
+import { BugReportModal } from '../components/BugReportModal'
 import type { Property } from '../types'
 
 export function PropertyListScreen() {
   const { profile, signOut } = useAuth()
   const navigate = useNavigate()
-  const [properties, setProperties] = useState<Property[]>([])
+  const [properties, setProperties]     = useState<Property[]>([])
+  const [showBugReport, setShowBugReport] = useState(false)
   const [query, setQuery]           = useState('')
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState('')
@@ -60,12 +62,20 @@ export function PropertyListScreen() {
           </div>
           <div className="text-right">
             <p className="text-white text-sm font-medium">{profile?.full_name ?? ''}</p>
-            <button
-              onClick={signOut}
-              className="text-ash-light text-xs underline underline-offset-2 mt-0.5 active:opacity-60"
-            >
-              Sign out
-            </button>
+            <div className="flex gap-3 mt-0.5 justify-end">
+              <button
+                onClick={() => setShowBugReport(true)}
+                className="text-ash-light text-xs underline underline-offset-2 active:opacity-60"
+              >
+                Report issue
+              </button>
+              <button
+                onClick={signOut}
+                className="text-ash-light text-xs underline underline-offset-2 active:opacity-60"
+              >
+                Sign out
+              </button>
+            </div>
           </div>
         </div>
 
@@ -103,6 +113,8 @@ export function PropertyListScreen() {
           ))}
         </div>
       </div>
+
+      {showBugReport && <BugReportModal onClose={() => setShowBugReport(false)} />}
     </div>
   )
 }

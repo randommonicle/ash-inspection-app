@@ -6,6 +6,8 @@ import classifyRouter from './routes/classify'
 import analysePhotoRouter from './routes/analysePhoto'
 import generateReportRouter from './routes/generateReport'
 import transcribeRouter from './routes/transcribe'
+import bugReportRouter from './routes/bugReport'
+import { startCleanupSchedule } from './services/cleanup'
 import { globalLimiter } from './middleware/rateLimits'
 
 const app  = express()
@@ -56,6 +58,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 app.get('/health', (_req, res) => res.json({ ok: true }))
 app.use('/api/classify', classifyRouter)
+app.use('/api/bug-report', bugReportRouter)
 app.use('/api/analyse-photo', analysePhotoRouter)
 app.use('/api/generate-report', generateReportRouter)
 
@@ -67,6 +70,7 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 
 app.listen(port, () => {
   console.log(`[STARTUP] ASH server running on http://localhost:${port}`)
+  startCleanupSchedule()
   if (!process.env.ANTHROPIC_API_KEY) {
     console.error('[STARTUP] WARNING: ANTHROPIC_API_KEY is not set — classification will fail')
   }
