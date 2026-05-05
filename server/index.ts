@@ -7,6 +7,7 @@ import analysePhotoRouter from './routes/analysePhoto'
 import generateReportRouter from './routes/generateReport'
 import transcribeRouter from './routes/transcribe'
 import bugReportRouter from './routes/bugReport'
+import adminRouter from './routes/admin'
 import { startCleanupSchedule } from './services/cleanup'
 import { globalLimiter } from './middleware/rateLimits'
 
@@ -61,6 +62,7 @@ app.use('/api/classify', classifyRouter)
 app.use('/api/bug-report', bugReportRouter)
 app.use('/api/analyse-photo', analysePhotoRouter)
 app.use('/api/generate-report', generateReportRouter)
+app.use('/admin', adminRouter)
 
 // Catch-all error handler — prevents unhandled errors returning raw stack traces to the client
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
