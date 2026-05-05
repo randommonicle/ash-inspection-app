@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { LocalObservation, LocalPhoto } from '../types'
 import { SECTION_LABELS } from '../types'
 
@@ -15,6 +16,7 @@ interface Props {
 
 export function ObservationFeedItem({ observation, photos, onOverride, onAppend, isAppendTarget, isPendingConfirmation }: Props) {
   const obsPhotos = photos.filter(p => p.observation_id === observation.id)
+  const [fullscreenPhoto, setFullscreenPhoto] = useState<LocalPhoto | null>(null)
 
   return (
     <div className={`bg-white rounded-xl border shadow-sm px-4 py-3 transition-all ${
@@ -47,13 +49,55 @@ export function ObservationFeedItem({ observation, photos, onOverride, onAppend,
       {obsPhotos.length > 0 && (
         <div className="flex gap-2 mt-2 flex-wrap">
           {obsPhotos.map(photo => (
-            <img
+            <button
               key={photo.id}
-              src={photo.web_path ?? photo.local_path}
-              alt="Inspection photo"
-              className="w-20 h-20 object-cover rounded-lg border border-gray-200"
-            />
+              onClick={() => setFullscreenPhoto(photo)}
+              className="shrink-0 active:opacity-80 transition"
+            >
+              <img
+                src={photo.web_path ?? photo.local_path}
+                alt="Inspection photo"
+                className="w-20 h-20 object-cover rounded-lg border border-gray-200"
+              />
+            </button>
           ))}
+        </div>
+      )}
+
+      {fullscreenPhoto && (
+        <div
+          className="fixed inset-0 z-50 bg-black flex flex-col"
+          onClick={() => setFullscreenPhoto(null)}
+        >
+          {/* Close button */}
+          <div className="flex justify-end p-4 shrink-0">
+            <button
+              onClick={() => setFullscreenPhoto(null)}
+              className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center active:bg-white/30 transition"
+            >
+              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Photo */}
+          <div className="flex-1 flex items-center justify-center px-4 min-h-0">
+            <img
+              src={fullscreenPhoto.web_path ?? fullscreenPhoto.local_path}
+              alt="Inspection photo"
+              className="max-w-full max-h-full object-contain rounded-lg"
+              onClick={e => e.stopPropagation()}
+            />
+          </div>
+
+          {/* Caption */}
+          {fullscreenPhoto.caption && (
+            <div className="px-6 py-4 shrink-0" onClick={e => e.stopPropagation()}>
+              <p className="text-white/80 text-sm text-center italic">{fullscreenPhoto.caption}</p>
+            </div>
+          )}
+          <div className="pb-8" />
         </div>
       )}
 
