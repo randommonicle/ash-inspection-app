@@ -16,6 +16,7 @@
 import express, { type Request, type Response } from 'express'
 import { requireAuth } from '../middleware/auth'
 import { transcribeLimiter } from '../middleware/rateLimits'
+import { logUsage, calcDeepgramCost } from '../services/usageLogger'
 
 const router = express.Router()
 
@@ -72,11 +73,24 @@ router.post(
     }
 
     const data = await dgRes.json() as {
-      results?: { channels?: Array<{ alternatives?: Array<{ transcript?: string }> }> }
+      metadata?: { duration?: number }
+      results?:  { channels?: Array<{ alternatives?: Array<{ transcript?: string }> }> }
     }
 
     const transcript: string =
       data?.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? ''
+
+    const audioSeconds = data?.metadata?.duration ?? 0
+    if (audioSeconds > 0) {
+      logUsage({
+        service:       'deepgram',
+        model:         'nova-3',
+        endpoint:      'transcribe',
+        user_id:       req.userId,
+        audio_seconds: audioSeconds,
+        cost_usd:      calcDeepgramCost(audioSeconds),
+      })
+    }
 
     console.log(`[TRANSCRIBE] Done — ${transcript.length} chars returned`)
     res.json({ transcript: transcript.trim() })

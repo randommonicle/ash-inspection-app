@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { MODELS } from '../config/models'
 import { CLASSIFY_PROMPT } from '../prompts/classify'
 import { ANALYSE_IMAGE_PROMPT } from '../prompts/analyseImage'
+import { logUsage, calcAnthropicCost } from './usageLogger'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -17,7 +18,12 @@ export interface ClassifyResult {
   split_at: number | null
 }
 
-export async function classifyNarration(narration: string): Promise<ClassifyResult> {
+export interface LogCtx {
+  userId?:      string
+  inspectionId?: string
+}
+
+export async function classifyNarration(narration: string, ctx?: LogCtx): Promise<ClassifyResult> {
   console.log(`[ANTHROPIC] Calling ${MODELS.CLASSIFICATION} for classification`)
 
   const message = await client.messages.create({
@@ -27,10 +33,18 @@ export async function classifyNarration(narration: string): Promise<ClassifyResu
     messages: [{ role: 'user', content: narration }],
   })
 
-  const raw = message.content[0].type === 'text' ? message.content[0].text : ''
+  logUsage({
+    service:       'anthropic',
+    model:         MODELS.CLASSIFICATION,
+    endpoint:      'classify',
+    user_id:       ctx?.userId,
+    inspection_id: ctx?.inspectionId,
+    input_tokens:  message.usage.input_tokens,
+    output_tokens: message.usage.output_tokens,
+    cost_usd:      calcAnthropicCost(MODELS.CLASSIFICATION, message.usage.input_tokens, message.usage.output_tokens),
+  })
 
-  // Claude occasionally wraps JSON in markdown code fences despite being told not to.
-  // Strip them before parsing to avoid JSON.parse failures.
+  const raw = message.content[0].type === 'text' ? message.content[0].text : ''
   const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
 
   console.log(`[ANTHROPIC] Raw response: ${text.slice(0, 200)}`)
@@ -51,7 +65,11 @@ export interface ImageAnalysisResult {
   section_key?: string
 }
 
-export async function analyseImage(base64Image: string, mediaType: 'image/jpeg' | 'image/png'): Promise<ImageAnalysisResult> {
+export async function analyseImage(
+  base64Image: string,
+  mediaType: 'image/jpeg' | 'image/png',
+  ctx?: LogCtx,
+): Promise<ImageAnalysisResult> {
   console.log(`[ANTHROPIC] Calling ${MODELS.IMAGE_ANALYSIS} for image analysis`)
 
   const message = await client.messages.create({
@@ -70,6 +88,17 @@ export async function analyseImage(base64Image: string, mediaType: 'image/jpeg' 
         },
       ],
     }],
+  })
+
+  logUsage({
+    service:       'anthropic',
+    model:         MODELS.IMAGE_ANALYSIS,
+    endpoint:      'analyse-photo',
+    user_id:       ctx?.userId,
+    inspection_id: ctx?.inspectionId,
+    input_tokens:  message.usage.input_tokens,
+    output_tokens: message.usage.output_tokens,
+    cost_usd:      calcAnthropicCost(MODELS.IMAGE_ANALYSIS, message.usage.input_tokens, message.usage.output_tokens),
   })
 
   const raw  = message.content[0].type === 'text' ? message.content[0].text : ''

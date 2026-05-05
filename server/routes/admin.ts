@@ -154,6 +154,96 @@ router.get('/api/properties', async (_req, res) => {
   res.json(data ?? [])
 })
 
+router.get('/api/costs', async (_req, res) => {
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()
+  const yearStart  = new Date(new Date().getFullYear(), 0, 1).toISOString()
+
+  const [allTime, thisMonth, thisYear, byService, byEndpoint, byMonth, recent] = await Promise.all([
+    supabase.from('api_usage_log').select('cost_usd'),
+    supabase.from('api_usage_log').select('cost_usd').gte('created_at', monthStart),
+    supabase.from('api_usage_log').select('cost_usd').gte('created_at', yearStart),
+    supabase.from('api_usage_log').select('service, cost_usd, input_tokens, output_tokens, audio_seconds'),
+    supabase.from('api_usage_log').select('endpoint, cost_usd'),
+    supabase.from('api_usage_log').select('created_at, cost_usd').order('created_at', { ascending: true }),
+    supabase.from('api_usage_log')
+      .select('created_at, service, model, endpoint, input_tokens, output_tokens, audio_seconds, cost_usd, users(full_name)')
+      .order('created_at', { ascending: false })
+      .limit(100),
+  ])
+
+  const sum = (rows: { cost_usd: number }[] | null) =>
+    (rows ?? []).reduce((acc, r) => acc + Number(r.cost_usd), 0)
+
+  // Aggregate by service
+  const serviceMap: Record<string, { cost: number; calls: number; inputTokens: number; outputTokens: number; audioSeconds: number }> = {}
+  for (const r of byService.data ?? []) {
+    if (!serviceMap[r.service]) serviceMap[r.service] = { cost: 0, calls: 0, inputTokens: 0, outputTokens: 0, audioSeconds: 0 }
+    serviceMap[r.service].cost         += Number(r.cost_usd)
+    serviceMap[r.service].calls        += 1
+    serviceMap[r.service].inputTokens  += r.input_tokens  ?? 0
+    serviceMap[r.service].outputTokens += r.output_tokens ?? 0
+    serviceMap[r.service].audioSeconds += Number(r.audio_seconds ?? 0)
+  }
+
+  // Aggregate by endpoint
+  const endpointMap: Record<string, { cost: number; calls: number }> = {}
+  for (const r of byEndpoint.data ?? []) {
+    if (!endpointMap[r.endpoint]) endpointMap[r.endpoint] = { cost: 0, calls: 0 }
+    endpointMap[r.endpoint].cost  += Number(r.cost_usd)
+    endpointMap[r.endpoint].calls += 1
+  }
+
+  // Monthly trend — group by YYYY-MM
+  const monthlyMap: Record<string, number> = {}
+  for (const r of byMonth.data ?? []) {
+    const key = r.created_at.slice(0, 7)
+    monthlyMap[key] = (monthlyMap[key] ?? 0) + Number(r.cost_usd)
+  }
+
+  res.json({
+    totals: {
+      allTime:   sum(allTime.data),
+      thisMonth: sum(thisMonth.data),
+      thisYear:  sum(thisYear.data),
+      calls:     (allTime.data ?? []).length,
+    },
+    byService:  Object.entries(serviceMap).map(([service, v])  => ({ service,  ...v })),
+    byEndpoint: Object.entries(endpointMap).map(([endpoint, v]) => ({ endpoint, ...v })),
+    monthly:    Object.entries(monthlyMap).sort().map(([month, cost]) => ({ month, cost })),
+    recent:     recent.data ?? [],
+  })
+})
+
+router.get('/api/costs/csv', async (_req, res) => {
+  const { data, error } = await supabase
+    .from('api_usage_log')
+    .select('created_at, service, model, endpoint, input_tokens, output_tokens, audio_seconds, cost_usd, inspection_id, user_id')
+    .order('created_at', { ascending: false })
+
+  if (error) return res.status(500).json({ error: error.message })
+
+  const rows = data ?? []
+  const header = 'Date,Service,Model,Endpoint,Input Tokens,Output Tokens,Audio Seconds,Cost (USD),Inspection ID,User ID'
+  const lines = rows.map(r =>
+    [
+      r.created_at,
+      r.service,
+      r.model,
+      r.endpoint,
+      r.input_tokens  ?? '',
+      r.output_tokens ?? '',
+      r.audio_seconds ?? '',
+      Number(r.cost_usd).toFixed(6),
+      r.inspection_id ?? '',
+      r.user_id       ?? '',
+    ].join(',')
+  )
+
+  res.setHeader('Content-Type', 'text/csv')
+  res.setHeader('Content-Disposition', `attachment; filename="ASH_API_Costs_${new Date().toISOString().slice(0,10)}.csv"`)
+  res.send([header, ...lines].join('\n'))
+})
+
 // ── Dashboard HTML (self-contained) ──────────────────────────────────────────
 
 const DASHBOARD_HTML = `<!DOCTYPE html>
@@ -262,6 +352,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <button class="tab" data-tab="pms" onclick="switchTab('pms')">Inspectors</button>
       <button class="tab" data-tab="properties" onclick="switchTab('properties')">Properties</button>
       <button class="tab" data-tab="bugs" onclick="switchTab('bugs')">Bug Reports</button>
+      <button class="tab" data-tab="costs" onclick="switchTab('costs')">Costs &amp; Usage</button>
     </div>
 
     <!-- Tab panels -->
@@ -301,6 +392,59 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         <span class="font-semibold text-white text-sm">Bug Reports &amp; Suggestions</span>
       </div>
       <div id="bugs-body"><div class="p-8 text-center text-slate-500 text-sm">Loading…</div></div>
+    </div>
+
+    <div id="panel-costs" class="tab-panel hidden space-y-6">
+      <!-- Cost summary cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="card rounded-xl p-4">
+          <div class="text-xl font-bold text-white" id="cost-alltime">—</div>
+          <div class="text-xs text-slate-400 mt-1">All-time spend</div>
+        </div>
+        <div class="card rounded-xl p-4">
+          <div class="text-xl font-bold text-yellow-400" id="cost-month">—</div>
+          <div class="text-xs text-slate-400 mt-1">This month</div>
+        </div>
+        <div class="card rounded-xl p-4">
+          <div class="text-xl font-bold text-blue-400" id="cost-year">—</div>
+          <div class="text-xs text-slate-400 mt-1">This year</div>
+        </div>
+        <div class="card rounded-xl p-4">
+          <div class="text-xl font-bold text-slate-300" id="cost-calls">—</div>
+          <div class="text-xs text-slate-400 mt-1">Total API calls</div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-2 gap-6">
+        <!-- By service -->
+        <div class="card rounded-xl overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-700/50 font-semibold text-white text-sm">By Service</div>
+          <div id="cost-by-service" class="p-4 text-slate-500 text-sm">Loading…</div>
+        </div>
+        <!-- By endpoint -->
+        <div class="card rounded-xl overflow-hidden">
+          <div class="px-5 py-4 border-b border-slate-700/50 font-semibold text-white text-sm">By Endpoint</div>
+          <div id="cost-by-endpoint" class="p-4 text-slate-500 text-sm">Loading…</div>
+        </div>
+      </div>
+
+      <!-- Monthly trend -->
+      <div class="card rounded-xl overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-700/50 flex items-center justify-between">
+          <span class="font-semibold text-white text-sm">Monthly Spend</span>
+          <a href="/admin/api/costs/csv" class="text-xs text-blue-400 hover:text-blue-300 px-3 py-1.5 rounded border border-blue-800 hover:border-blue-600 transition">⬇ Download CSV</a>
+        </div>
+        <div id="cost-monthly" class="p-4 text-slate-500 text-sm">Loading…</div>
+      </div>
+
+      <!-- Recent calls log -->
+      <div class="card rounded-xl overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-700/50">
+          <span class="font-semibold text-white text-sm">Recent API Calls</span>
+          <span class="text-slate-400 text-xs ml-2">(last 100)</span>
+        </div>
+        <div id="cost-recent" class="p-4 text-slate-500 text-sm">Loading…</div>
+      </div>
     </div>
 
   </main>
@@ -422,6 +566,88 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     } catch(e) { document.getElementById('properties-body').innerHTML = empty('Failed to load') }
   }
 
+  function usd(v) { return v < 0.01 ? '<$0.01' : '$' + v.toFixed(4) }
+  function bar(frac, colour) {
+    const pct = Math.round(frac * 100)
+    return \`<div class="flex items-center gap-2"><div class="flex-1 bg-slate-700 rounded-full h-1.5"><div class="h-1.5 rounded-full \${colour}" style="width:\${pct}%"></div></div><span class="text-xs w-8 text-right text-slate-400">\${pct}%</span></div>\`
+  }
+
+  async function loadCosts() {
+    try {
+      const d = await api('/api/costs')
+
+      document.getElementById('cost-alltime').textContent = usd(d.totals.allTime)
+      document.getElementById('cost-month').textContent   = usd(d.totals.thisMonth)
+      document.getElementById('cost-year').textContent    = usd(d.totals.thisYear)
+      document.getElementById('cost-calls').textContent   = d.totals.calls.toLocaleString()
+
+      // By service
+      const maxSvc = Math.max(...d.byService.map(s => s.cost), 0.000001)
+      document.getElementById('cost-by-service').innerHTML = d.byService.length
+        ? d.byService.sort((a,b) => b.cost - a.cost).map(s => \`
+          <div class="mb-4">
+            <div class="flex justify-between mb-1">
+              <span class="font-medium text-slate-200 capitalize">\${s.service}</span>
+              <span class="text-slate-300 font-mono">\${usd(s.cost)}</span>
+            </div>
+            \${bar(s.cost / maxSvc, s.service === 'anthropic' ? 'bg-purple-500' : 'bg-green-500')}
+            <div class="text-xs text-slate-500 mt-1">
+              \${s.calls} calls
+              \${s.inputTokens  ? '· ' + (s.inputTokens/1000).toFixed(1)  + 'K input tokens'  : ''}
+              \${s.outputTokens ? '· ' + (s.outputTokens/1000).toFixed(1) + 'K output tokens' : ''}
+              \${s.audioSeconds ? '· ' + (s.audioSeconds/60).toFixed(1)   + ' min audio'      : ''}
+            </div>
+          </div>\`).join('')
+        : '<p class="text-slate-500 text-sm">No data yet</p>'
+
+      // By endpoint
+      const maxEp = Math.max(...d.byEndpoint.map(e => e.cost), 0.000001)
+      document.getElementById('cost-by-endpoint').innerHTML = d.byEndpoint.length
+        ? d.byEndpoint.sort((a,b) => b.cost - a.cost).map(e => \`
+          <div class="mb-3">
+            <div class="flex justify-between mb-1">
+              <span class="font-mono text-xs text-slate-300">\${e.endpoint}</span>
+              <span class="text-slate-300 font-mono text-sm">\${usd(e.cost)}</span>
+            </div>
+            \${bar(e.cost / maxEp, 'bg-blue-500')}
+            <div class="text-xs text-slate-500 mt-0.5">\${e.calls} calls</div>
+          </div>\`).join('')
+        : '<p class="text-slate-500 text-sm">No data yet</p>'
+
+      // Monthly trend table
+      document.getElementById('cost-monthly').innerHTML = d.monthly.length
+        ? '<table><thead><tr><th>Month</th><th>Spend (USD)</th><th>Trend</th></tr></thead><tbody>' +
+          d.monthly.slice().reverse().map(m => {
+            const maxM = Math.max(...d.monthly.map(x => x.cost), 0.000001)
+            const pct  = Math.round((m.cost / maxM) * 100)
+            return \`<tr>
+              <td class="font-mono text-slate-300">\${m.month}</td>
+              <td class="font-mono text-white">\${usd(m.cost)}</td>
+              <td class="w-48"><div class="bg-slate-700 rounded h-1.5"><div class="bg-yellow-500 h-1.5 rounded" style="width:\${pct}%"></div></div></td>
+            </tr>\`
+          }).join('') + '</tbody></table>'
+        : '<p class="text-slate-500 text-sm text-center py-4">No usage recorded yet — API calls will appear here once the first inspection is processed.</p>'
+
+      // Recent calls
+      document.getElementById('cost-recent').innerHTML = d.recent.length
+        ? '<table><thead><tr><th>Time</th><th>Service</th><th>Endpoint</th><th>In</th><th>Out</th><th>Audio</th><th>Cost</th></tr></thead><tbody>' +
+          d.recent.map(r => \`<tr>
+            <td class="text-slate-500 text-xs whitespace-nowrap">\${fmt(r.created_at)}</td>
+            <td><span class="text-xs px-1.5 py-0.5 rounded \${r.service === 'anthropic' ? 'badge-report' : 'badge-done'}">\${r.service}</span></td>
+            <td class="font-mono text-xs text-slate-400">\${r.endpoint}</td>
+            <td class="text-slate-400 text-xs">\${r.input_tokens  ? (r.input_tokens /1000).toFixed(1)+'K' : '—'}</td>
+            <td class="text-slate-400 text-xs">\${r.output_tokens ? (r.output_tokens/1000).toFixed(1)+'K' : '—'}</td>
+            <td class="text-slate-400 text-xs">\${r.audio_seconds ? Number(r.audio_seconds).toFixed(1)+'s' : '—'}</td>
+            <td class="font-mono text-white text-xs">\${usd(r.cost_usd)}</td>
+          </tr>\`).join('') + '</tbody></table>'
+        : '<p class="text-slate-500 text-sm text-center py-4">No API calls logged yet.</p>'
+
+    } catch(e) {
+      console.error('costs', e)
+      document.getElementById('cost-monthly').innerHTML = '<p class="text-red-400 text-sm">Failed to load cost data</p>'
+    }
+  }
+
   async function loadBugs() {
     try {
       const data = await api('/api/bugs')
@@ -451,7 +677,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   async function loadAll() {
     document.getElementById('refresh-indicator').classList.remove('hidden')
-    await Promise.all([loadStats(), loadActive(), loadRecent(), loadPMs(), loadProperties(), loadBugs()])
+    await Promise.all([loadStats(), loadActive(), loadRecent(), loadPMs(), loadProperties(), loadBugs(), loadCosts()])
     document.getElementById('refresh-indicator').classList.add('hidden')
     document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'})
   }

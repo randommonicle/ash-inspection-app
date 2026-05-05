@@ -10,6 +10,7 @@ import { convertDocxToPdf } from '../services/pdf'
 import { getWeatherForInspection } from '../services/weather'
 import { requireAuth } from '../middleware/auth'
 import { reportLimiter } from '../middleware/rateLimits'
+import { logUsage, calcAnthropicCost } from '../services/usageLogger'
 
 const router  = Router()
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -36,7 +37,12 @@ interface PropertyContext {
   propertyAddress: string
 }
 
-async function processObservation(obs: RawObservation, ctx: PropertyContext): Promise<ProcessedResult> {
+interface LogCtx {
+  inspectionId: string
+  userId:       string
+}
+
+async function processObservation(obs: RawObservation, ctx: PropertyContext, logCtx: LogCtx): Promise<ProcessedResult> {
   console.log(`[REPORT] Processing observation ${obs.id} (${obs.section_key})`)
 
   // Prepend property context so Sonnet can autocorrect any phonetic misspellings
@@ -54,6 +60,13 @@ ${obs.raw_narration ?? ''}`
     max_tokens: 512,
     system:     PROCESS_OBSERVATION_PROMPT,
     messages:   [{ role: 'user', content: userContent }],
+  })
+
+  logUsage({
+    service: 'anthropic', model: MODELS.OBSERVATION, endpoint: 'generate-report/observation',
+    inspection_id: logCtx.inspectionId, user_id: logCtx.userId,
+    input_tokens: msg.usage.input_tokens, output_tokens: msg.usage.output_tokens,
+    cost_usd: calcAnthropicCost(MODELS.OBSERVATION, msg.usage.input_tokens, msg.usage.output_tokens),
   })
 
   const raw  = msg.content[0].type === 'text' ? msg.content[0].text : ''
@@ -74,6 +87,7 @@ async function identifyRecurringItems(
   previousActions: PreviousAction[],
   currentObservations: ReportObservation[],
   previousDate: string,
+  logCtx: LogCtx,
 ): Promise<RecurringItem[]> {
   if (previousActions.length === 0 || currentObservations.length === 0) return []
 
@@ -101,6 +115,13 @@ Do not explain your reasoning. Do not use markdown. Output the JSON array and no
     model:      MODELS.OBSERVATION,
     max_tokens: 256,
     messages:   [{ role: 'user', content: prompt }],
+  })
+
+  logUsage({
+    service: 'anthropic', model: MODELS.OBSERVATION, endpoint: 'generate-report/recurring',
+    inspection_id: logCtx.inspectionId, user_id: logCtx.userId,
+    input_tokens: msg.usage.input_tokens, output_tokens: msg.usage.output_tokens,
+    cost_usd: calcAnthropicCost(MODELS.OBSERVATION, msg.usage.input_tokens, msg.usage.output_tokens),
   })
 
   const raw  = msg.content[0].type === 'text' ? msg.content[0].text : '[]'
@@ -148,6 +169,7 @@ async function synthesiseFromPhotos(
   photos: ReportPhoto[],
   ctx: PropertyContext,
   inspectionDate: string,
+  logCtx: LogCtx,
 ): Promise<ProcessedResult | null> {
   const analysed = photos.filter(p => p.opus_description?.description)
   if (analysed.length === 0) return null
@@ -185,6 +207,13 @@ Risk levels: High = immediate safety or legal risk (within 5 working days), Medi
     messages:   [{ role: 'user', content: prompt }],
   })
 
+  logUsage({
+    service: 'anthropic', model: MODELS.OBSERVATION, endpoint: 'generate-report/synthesis',
+    inspection_id: logCtx.inspectionId, user_id: logCtx.userId,
+    input_tokens: msg.usage.input_tokens, output_tokens: msg.usage.output_tokens,
+    cost_usd: calcAnthropicCost(MODELS.OBSERVATION, msg.usage.input_tokens, msg.usage.output_tokens),
+  })
+
   const raw  = msg.content[0].type === 'text' ? msg.content[0].text : ''
   const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
 
@@ -198,7 +227,7 @@ Risk levels: High = immediate safety or legal risk (within 5 working days), Medi
   }
 }
 
-async function generateSummary(observations: ReportObservation[]): Promise<string> {
+async function generateSummary(observations: ReportObservation[], logCtx: LogCtx): Promise<string> {
   console.log(`[REPORT] Generating overall condition summary`)
 
   const input = observations
@@ -210,6 +239,13 @@ async function generateSummary(observations: ReportObservation[]): Promise<strin
     max_tokens: 256,
     system:     GENERATE_SUMMARY_PROMPT,
     messages:   [{ role: 'user', content: input }],
+  })
+
+  logUsage({
+    service: 'anthropic', model: MODELS.SUMMARY, endpoint: 'generate-report/summary',
+    inspection_id: logCtx.inspectionId, user_id: logCtx.userId,
+    input_tokens: msg.usage.input_tokens, output_tokens: msg.usage.output_tokens,
+    cost_usd: calcAnthropicCost(MODELS.SUMMARY, msg.usage.input_tokens, msg.usage.output_tokens),
   })
 
   const summary = msg.content[0].type === 'text' ? msg.content[0].text.trim() : ''
@@ -277,6 +313,8 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
 
     console.log(`[REPORT] Generating for ${propertyName} (${propertyRef}), inspector: ${inspectorName}`)
 
+    const logCtx: LogCtx = { inspectionId: inspection_id, userId: req.userId! }
+
     // ── 2. Fetch and process observations ─────────────────────────────────────
     const { data: rawObs, error: obsErr } = await supabase
       .from('observations')
@@ -300,7 +338,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
         }
       } else if (obs.raw_narration) {
         try {
-          result = await processObservation(obs, { propertyName, propertyRef, propertyAddress })
+          result = await processObservation(obs, { propertyName, propertyRef, propertyAddress }, logCtx)
           await supabase.from('observations').update({
             processed_text: result.processed_text,
             action_text:    result.action_text,
@@ -360,7 +398,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
           console.log(`[REPORT] Photo ${photo.id} has no Opus description — analysing now`)
           const base64 = imageBuffer.toString('base64')
           const { analyseImage } = await import('../services/anthropic')
-          opusDescription = await analyseImage(base64, 'image/jpeg')
+          opusDescription = await analyseImage(base64, 'image/jpeg', logCtx)
           await supabase.from('photos').update({ opus_description: opusDescription }).eq('id', photo.id)
           console.log(`[REPORT] Late analysis complete for ${photo.id}: "${opusDescription.suggested_caption}"`)
         } catch (err) {
@@ -419,6 +457,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
           sectionPhotos,
           { propertyName, propertyRef, propertyAddress },
           inspectionDate,
+          logCtx,
         )
         if (result) {
           const templateOrder = SECTION_ORDER_FOR_SYNTHESIS.indexOf(sectionKey)
@@ -481,7 +520,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
           console.log('[RECURRING] No previous actions found — either no issues were flagged last time, or report was never generated for that inspection')
         }
 
-        recurringItems = await identifyRecurringItems(previousActions, processedObservations, prevDate)
+        recurringItems = await identifyRecurringItems(previousActions, processedObservations, prevDate, logCtx)
       } else {
         console.log('[RECURRING] No previous inspection found — this may be the first inspection for this property, or all prior inspections are newer than this one')
       }
@@ -493,7 +532,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     // ── 6. Generate summary + fetch weather concurrently ─────────────────────
     const [overallSummary, weatherStr] = await Promise.all([
       processedObservations.length > 0
-        ? generateSummary(processedObservations).catch((err) => {
+        ? generateSummary(processedObservations, logCtx).catch((err) => {
             console.warn('[REPORT] Summary generation failed (non-fatal):', err instanceof Error ? err.message : err)
             return 'Overall condition summary could not be generated automatically. Please review the observations and actions recorded below.'
           })

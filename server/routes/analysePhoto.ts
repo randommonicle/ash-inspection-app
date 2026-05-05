@@ -54,7 +54,10 @@ router.post('/', requireAuth, photoAnalysisLimiter, async (req: Request, res: Re
     const arrayBuffer = await data.arrayBuffer()
     const base64 = Buffer.from(arrayBuffer).toString('base64')
 
-    const result = await analyseImage(base64, 'image/jpeg')
+    const result = await analyseImage(base64, 'image/jpeg', {
+      userId:       req.userId,
+      inspectionId: photoRow.inspection_id,
+    })
 
     const { error: updateErr } = await supabase
       .from('photos')
