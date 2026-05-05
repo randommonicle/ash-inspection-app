@@ -5,7 +5,6 @@ import { useAuth } from '../contexts/AuthContext'
 
 interface RosterEntry {
   full_name: string
-  email: string
 }
 
 type Step = 'pick' | 'credentials' | 'verify-email'
@@ -25,7 +24,7 @@ export function RegisterScreen() {
   const [error, setError]           = useState('')
 
   useEffect(() => {
-    supabase.from('pm_roster').select('full_name, email').order('full_name').then(({ data }) => {
+    supabase.from('pm_roster').select('full_name').order('full_name').then(({ data }) => {
       setRoster(data ?? [])
       setLoadingRoster(false)
     })
@@ -33,7 +32,6 @@ export function RegisterScreen() {
 
   const handlePickName = async (entry: RosterEntry) => {
     setError('')
-    // Check this name hasn't already been registered
     const { count } = await supabase
       .from('users')
       .select('id', { count: 'exact', head: true })
@@ -44,7 +42,6 @@ export function RegisterScreen() {
       return
     }
     setSelected(entry)
-    setEmail(entry.email) // pre-fill — must match roster
     setStep('credentials')
   }
 
@@ -53,10 +50,6 @@ export function RegisterScreen() {
     if (!selected) return
     setError('')
 
-    if (email.trim().toLowerCase() !== selected.email.toLowerCase()) {
-      setError(`Email must match the address on file for ${selected.full_name}.`)
-      return
-    }
     if (password.length < 8) {
       setError('Password must be at least 8 characters.')
       return
@@ -123,15 +116,15 @@ export function RegisterScreen() {
               Welcome, <span className="text-white font-semibold">{selected.full_name}</span>
             </p>
             <div>
-              <label className="block text-ash-light text-sm mb-1.5">Email</label>
+              <label className="block text-ash-light text-sm mb-1.5">Your email address</label>
               <input
                 type="email"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 required
+                placeholder="you@example.com"
                 className="w-full px-4 py-3 rounded-lg bg-white/10 border border-ash-mid text-white placeholder-white/30 focus:outline-none focus:border-ash-light transition text-base"
               />
-              <p className="text-white/40 text-xs mt-1">Must match the email on file for your account.</p>
             </div>
             <div>
               <label className="block text-ash-light text-sm mb-1.5">Choose a password</label>
