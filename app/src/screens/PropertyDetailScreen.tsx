@@ -350,6 +350,15 @@ export function PropertyDetailScreen() {
             setChecklist(null)
             navigate(`/inspection/${inspectionId}`, { state: { property, jumpToSection: sectionKey } })
           }}
+          onUpdatePropertyFlag={async (flag) => {
+            await supabase.rpc('update_property_flag', {
+              p_property_id: property.id,
+              p_flag:        flag,
+              p_value:       false,
+            })
+            // Update local state so the checklist reflects the new flag immediately
+            setProperty(prev => prev ? { ...prev, [flag]: false } : prev)
+          }}
         />
       )}
     </div>
