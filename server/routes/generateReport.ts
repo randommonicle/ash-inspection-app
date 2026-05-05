@@ -128,6 +128,76 @@ Do not explain your reasoning. Do not use markdown. Output the JSON array and no
   return items
 }
 
+const SECTION_LABELS_FOR_SYNTHESIS: Record<string, string> = {
+  external_approach: 'External Approach and Entrance',
+  grounds:           'Grounds and Landscaping',
+  bin_store:         'Bin Store and Waste Facilities',
+  car_park:          'Car Park',
+  external_fabric:   'External Fabric and Elevations',
+  roof:              'Roof and Roof Terrace',
+  communal_entrance: 'Communal Entrance and Reception',
+  stairwells:        'Stairwells and Circulation',
+  lifts:             'Lifts',
+  plant_room:        'Plant Room and Utilities',
+  internal_communal: 'Internal Communal Areas (General)',
+  additional:        'Additional / Property-Specific Areas',
+}
+
+async function synthesiseFromPhotos(
+  sectionKey: string,
+  photos: ReportPhoto[],
+  ctx: PropertyContext,
+  inspectionDate: string,
+): Promise<ProcessedResult | null> {
+  const analysed = photos.filter(p => p.opus_description?.description)
+  if (analysed.length === 0) return null
+
+  const sectionLabel = SECTION_LABELS_FOR_SYNTHESIS[sectionKey] ?? sectionKey
+
+  const photoLines = analysed.map((p, i) => {
+    const desc   = p.opus_description!.description!
+    const issues = p.opus_description!.notable_issues ?? []
+    return `Photo ${i + 1}:\nDescription: ${desc}${issues.length > 0 ? `\nNotable issues: ${issues.join(', ')}` : ''}`
+  }).join('\n\n')
+
+  const prompt = `You are a property management professional writing a section of a UK residential leasehold property inspection report.
+
+The following photographs were taken in the "${sectionLabel}" area of ${ctx.propertyName} (${ctx.propertyRef}) during an inspection on ${inspectionDate}. Each photograph has been automatically described:
+
+${photoLines}
+
+Write a single professional observation paragraph for this section. Consolidate the photographic evidence into coherent prose as a property manager would write it — clear, factual, third-person, present tense. Then identify the most significant action required (if any) and its risk level.
+
+Respond ONLY with valid JSON:
+{
+  "processed_text": "<professional observation paragraph>",
+  "action_text": "<action required, or null if no action needed>",
+  "risk_level": "High" | "Medium" | "Low" | null
+}
+
+Risk levels: High = immediate safety or legal risk (within 5 working days), Medium = maintenance required (within 30 days), Low = minor defect (within 90 days). Use null if no action is required.`
+
+  console.log(`[REPORT] Synthesising observation for ${sectionKey} from ${analysed.length} photo(s)`)
+
+  const msg = await anthropic.messages.create({
+    model:      MODELS.OBSERVATION,
+    max_tokens: 512,
+    messages:   [{ role: 'user', content: prompt }],
+  })
+
+  const raw  = msg.content[0].type === 'text' ? msg.content[0].text : ''
+  const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+
+  try {
+    const result = JSON.parse(text) as ProcessedResult
+    console.log(`[REPORT] Synthesised ${sectionKey} — risk: ${result.risk_level ?? 'none'}`)
+    return result
+  } catch {
+    console.warn(`[REPORT] Failed to parse synthesis for ${sectionKey} — raw: ${text.slice(0, 120)}`)
+    return null
+  }
+}
+
 async function generateSummary(observations: ReportObservation[]): Promise<string> {
   console.log(`[REPORT] Generating overall condition summary`)
 
@@ -253,7 +323,122 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
       })
     }
 
-    // ── 3. Identify recurring items from previous inspection ──────────────────
+    // ── 3. Fetch photos, download image data, run any late Opus analysis ─────
+    const { data: rawPhotos, error: photoErr } = await supabase
+      .from('photos')
+      .select('id, observation_id, storage_path, caption, opus_description')
+      .eq('inspection_id', inspection_id)
+
+    if (photoErr) throw new Error(`Fetch photos: ${photoErr.message}`)
+    console.log(`[REPORT] Fetched ${rawPhotos?.length ?? 0} photos`)
+
+    const reportPhotos: ReportPhoto[] = []
+
+    for (const photo of (rawPhotos ?? [])) {
+      let imageBuffer: Buffer | null = null
+
+      if (photo.storage_path) {
+        try {
+          const { data: fileData, error: dlErr } = await supabase.storage
+            .from('inspection-files')
+            .download(photo.storage_path)
+
+          if (dlErr) {
+            console.warn(`[REPORT] Photo ${photo.id} download failed:`, dlErr.message)
+          } else {
+            imageBuffer = Buffer.from(await fileData.arrayBuffer())
+            console.log(`[REPORT] Photo ${photo.id} downloaded (${imageBuffer.byteLength} bytes)`)
+          }
+        } catch (err) {
+          console.warn(`[REPORT] Photo ${photo.id} download error:`, err)
+        }
+      }
+
+      let opusDescription = photo.opus_description ?? null
+      if (!opusDescription && imageBuffer) {
+        try {
+          console.log(`[REPORT] Photo ${photo.id} has no Opus description — analysing now`)
+          const base64 = imageBuffer.toString('base64')
+          const { analyseImage } = await import('../services/anthropic')
+          opusDescription = await analyseImage(base64, 'image/jpeg')
+          await supabase.from('photos').update({ opus_description: opusDescription }).eq('id', photo.id)
+          console.log(`[REPORT] Late analysis complete for ${photo.id}: "${opusDescription.suggested_caption}"`)
+        } catch (err) {
+          console.warn(`[REPORT] Late analysis failed for ${photo.id}:`, err)
+        }
+      }
+
+      reportPhotos.push({
+        id:               photo.id,
+        observation_id:   photo.observation_id ?? null,
+        caption:          photo.caption ?? null,
+        opus_description: opusDescription,
+        imageBuffer,
+      })
+    }
+
+    // ── 4. Synthesise observations for sections that have photos but no narration
+    const SECTION_ORDER_FOR_SYNTHESIS = [
+      'external_approach', 'grounds', 'bin_store', 'car_park',
+      'external_fabric', 'roof', 'communal_entrance', 'stairwells',
+      'lifts', 'plant_room', 'internal_communal', 'additional',
+    ]
+    const SECTION_FLAGS_FOR_SYNTHESIS: Record<string, keyof typeof propertyFlags> = {
+      car_park: 'has_car_park',
+      lifts:    'has_lift',
+      roof:     'has_roof_access',
+    }
+
+    // Group unlinked photos by their Opus section_key
+    const photosBySectionForSynthesis = new Map<string, ReportPhoto[]>()
+    for (const photo of reportPhotos) {
+      if (!photo.observation_id && photo.opus_description?.section_key) {
+        const key = photo.opus_description.section_key
+        const arr = photosBySectionForSynthesis.get(key) ?? []
+        arr.push(photo)
+        photosBySectionForSynthesis.set(key, arr)
+      }
+    }
+
+    // Sections already covered by narration-based observations
+    const coveredSections = new Set(processedObservations.map(o => o.section_key))
+
+    for (const sectionKey of SECTION_ORDER_FOR_SYNTHESIS) {
+      // Skip sections gated by a false property flag
+      const flag = SECTION_FLAGS_FOR_SYNTHESIS[sectionKey]
+      if (flag && !propertyFlags[flag]) continue
+      // Skip if narration observations already cover this section
+      if (coveredSections.has(sectionKey)) continue
+
+      const sectionPhotos = photosBySectionForSynthesis.get(sectionKey) ?? []
+      if (sectionPhotos.length === 0) continue
+
+      try {
+        const result = await synthesiseFromPhotos(
+          sectionKey,
+          sectionPhotos,
+          { propertyName, propertyRef, propertyAddress },
+          inspectionDate,
+        )
+        if (result) {
+          const templateOrder = SECTION_ORDER_FOR_SYNTHESIS.indexOf(sectionKey)
+          processedObservations.push({
+            id:             `synth_${sectionKey}`,
+            section_key:    sectionKey,
+            template_order: templateOrder,
+            ...result,
+          })
+          console.log(`[REPORT] Photo-derived observation added for section: ${sectionKey}`)
+        }
+      } catch (err) {
+        console.warn(`[REPORT] Synthesis failed for ${sectionKey} (non-fatal):`, err)
+      }
+    }
+
+    // Re-sort processedObservations by template_order after any synthesis additions
+    processedObservations.sort((a, b) => a.template_order - b.template_order)
+
+    // ── 5. Identify recurring items from previous inspection ──────────────────
     let recurringItems: RecurringItem[] = []
     try {
       // Find the most recent completed inspection for this property BEFORE this one
@@ -305,7 +490,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
       recurringItems = []
     }
 
-    // ── 4. Generate summary + fetch weather concurrently ─────────────────────
+    // ── 6. Generate summary + fetch weather concurrently ─────────────────────
     const [overallSummary, weatherStr] = await Promise.all([
       processedObservations.length > 0
         ? generateSummary(processedObservations)
@@ -321,64 +506,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
       day: 'numeric', month: 'long', year: 'numeric',
     }) + ' (projected)'
 
-    // ── 5. Fetch photos and download image data ───────────────────────────────
-    const { data: rawPhotos, error: photoErr } = await supabase
-      .from('photos')
-      .select('id, observation_id, storage_path, caption, opus_description')
-      .eq('inspection_id', inspection_id)
-
-    if (photoErr) throw new Error(`Fetch photos: ${photoErr.message}`)
-    console.log(`[REPORT] Fetched ${rawPhotos?.length ?? 0} photos`)
-
-    const reportPhotos: ReportPhoto[] = []
-
-    for (const photo of (rawPhotos ?? [])) {
-      let imageBuffer: Buffer | null = null
-
-      if (photo.storage_path) {
-        try {
-          const { data: fileData, error: dlErr } = await supabase.storage
-            .from('inspection-files')
-            .download(photo.storage_path)
-
-          if (dlErr) {
-            console.warn(`[REPORT] Photo ${photo.id} download failed:`, dlErr.message)
-          } else {
-            imageBuffer = Buffer.from(await fileData.arrayBuffer())
-            console.log(`[REPORT] Photo ${photo.id} downloaded (${imageBuffer.byteLength} bytes)`)
-          }
-        } catch (err) {
-          console.warn(`[REPORT] Photo ${photo.id} download error:`, err)
-        }
-      }
-
-      // If the photo was never analysed (e.g. server was down during sync),
-      // run Opus analysis now so the caption still appears in the report.
-      let opusDescription = photo.opus_description ?? null
-      if (!opusDescription && imageBuffer) {
-        try {
-          console.log(`[REPORT] Photo ${photo.id} has no Opus description — analysing now`)
-          const base64 = imageBuffer.toString('base64')
-          const { analyseImage } = await import('../services/anthropic')
-          opusDescription = await analyseImage(base64, 'image/jpeg')
-          // Save back so future reports don't need to re-analyse
-          await supabase.from('photos').update({ opus_description: opusDescription }).eq('id', photo.id)
-          console.log(`[REPORT] Late analysis complete for ${photo.id}: "${opusDescription.suggested_caption}"`)
-        } catch (err) {
-          console.warn(`[REPORT] Late analysis failed for ${photo.id}:`, err)
-        }
-      }
-
-      reportPhotos.push({
-        id:               photo.id,
-        observation_id:   photo.observation_id ?? null,
-        caption:          photo.caption ?? null,
-        opus_description: opusDescription,
-        imageBuffer,
-      })
-    }
-
-    // ── 6. Build Word document ────────────────────────────────────────────────
+    // ── 7. Build Word document ────────────────────────────────────────────────
     const docxBuffer = await buildReportDocx({
       propertyName,
       propertyRef,
@@ -400,7 +528,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
       recurringItems,
     })
 
-    // ── 7. Upload to Supabase Storage ─────────────────────────────────────────
+    // ── 8. Upload to Supabase Storage ─────────────────────────────────────────
     const storagePath = `${inspection.property_id}/${inspection_id}/report.docx`
     const { error: uploadErr } = await supabase.storage
       .from('inspection-files')

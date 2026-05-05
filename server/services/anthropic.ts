@@ -48,6 +48,7 @@ export interface ImageAnalysisResult {
   description: string
   notable_issues: string[]
   suggested_caption: string
+  section_key?: string
 }
 
 export async function analyseImage(base64Image: string, mediaType: 'image/jpeg' | 'image/png'): Promise<ImageAnalysisResult> {

@@ -82,7 +82,7 @@ export interface ReportPhoto {
   id: string
   observation_id: string | null
   caption: string | null
-  opus_description: { suggested_caption?: string; description?: string } | null
+  opus_description: { suggested_caption?: string; description?: string; notable_issues?: string[]; section_key?: string } | null
   imageBuffer: Buffer | null
 }
 
@@ -778,11 +778,13 @@ export async function buildReportDocx(data: ReportData): Promise<Buffer> {
       photosBySection.set(obs.section_key, arr)
     }
   }
-  // Also include unlinked photos in additional section
+  // Unlinked photos: use Opus section_key if available, else fall back to additional
   const unlinked = data.photos.filter(p => !p.observation_id)
-  if (unlinked.length > 0) {
-    const arr = photosBySection.get('additional') ?? []
-    photosBySection.set('additional', [...arr, ...unlinked])
+  for (const photo of unlinked) {
+    const sectionKey = photo.opus_description?.section_key ?? 'additional'
+    const arr = photosBySection.get(sectionKey) ?? []
+    arr.push(photo)
+    photosBySection.set(sectionKey, arr)
   }
 
   const children: (Paragraph | Table)[] = []
