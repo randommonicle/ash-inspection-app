@@ -147,27 +147,23 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
                   )}
                 </div>
 
-                {/* Action buttons — only for uncovered sections in mixed inspections */}
-                {!covered && !isPhotosOnly && (
+                {/* Action buttons — Edit for pending (photos-only) and warn states; N/A only for warn */}
+                {!covered && (isPending || isWarn) && (
                   <div className="flex gap-1.5 shrink-0">
+                    <button
+                      onClick={() => onEditSection(key)}
+                      className="text-xs px-2.5 py-1 rounded-lg font-semibold bg-ash-navy text-white active:opacity-70 transition"
+                    >
+                      Edit
+                    </button>
                     {isWarn && (
                       <button
-                        onClick={() => onEditSection(key)}
-                        className="text-xs px-2.5 py-1 rounded-lg font-semibold bg-ash-navy text-white active:opacity-70 transition"
+                        onClick={() => toggleNA(key)}
+                        className="text-xs px-2.5 py-1 rounded-lg font-semibold transition active:scale-95 bg-amber-100 text-amber-700 active:bg-amber-200"
                       >
-                        Edit
+                        N/A
                       </button>
                     )}
-                    <button
-                      onClick={() => toggleNA(key)}
-                      className={`text-xs px-2.5 py-1 rounded-lg font-semibold transition active:scale-95 ${
-                        isNA
-                          ? 'bg-gray-200 text-gray-600 active:bg-gray-300'
-                          : 'bg-amber-100 text-amber-700 active:bg-amber-200'
-                      }`}
-                    >
-                      {isNA ? 'Undo' : 'N/A'}
-                    </button>
                   </div>
                 )}
               </div>
