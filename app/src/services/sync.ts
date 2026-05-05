@@ -1,3 +1,20 @@
+// Background sync service — uploads completed inspections to Supabase.
+//
+// Sync order matters: inspection → observations → photos (in that order) because
+// the Supabase foreign key constraints require the parent row to exist first.
+//
+// Per-photo failures are swallowed and logged but do not abort the whole sync.
+// This means a corrupt or oversized photo will never block the rest of the data.
+//
+// After each photo uploads successfully, Opus image analysis is triggered
+// server-side. The resulting caption and section_key are written back to SQLite
+// so the local viewer can display them without a round-trip to Supabase.
+//
+// syncPendingInspections() is the only public entry point. Call it:
+//   - when the app comes back online (useNetwork hook)
+//   - when the user manually taps "Sync"
+//   - on app resume / foreground event
+
 import { Filesystem } from '@capacitor/filesystem'
 import { supabase } from './supabase'
 import { authHeaders } from './apiClient'

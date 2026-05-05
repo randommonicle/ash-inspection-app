@@ -1,3 +1,14 @@
+// Auth context — wraps Supabase Auth and exposes session/profile to the whole app.
+//
+// DELIBERATE DESIGN: the app signs out on every cold start (new process).
+// This is intentional — PMs use company Android phones that may be passed between
+// colleagues. Requiring a fresh login each time prevents one PM from accidentally
+// submitting work under another's name.
+//
+// Backgrounding the app (answering a call, switching apps mid-inspection) does NOT
+// trigger a sign-out because the WebView JS runtime stays alive. Only fully closing
+// the app forces re-login.
+
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from '../services/supabase'

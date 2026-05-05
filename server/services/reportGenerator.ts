@@ -33,6 +33,7 @@ const SECTION_LABELS: Record<string, string> = {
   stairwells:        'Stairwells and Circulation',
   lifts:             'Lifts',
   plant_room:        'Plant Room and Utilities',
+  meter_reads:       'Meter Reads and Utility Services',
   internal_communal: 'Internal Communal Areas (General)',
   additional:        'Additional / Property-Specific Areas',
 }
@@ -40,7 +41,7 @@ const SECTION_LABELS: Record<string, string> = {
 const SECTION_ORDER = [
   'external_approach', 'grounds', 'bin_store', 'car_park',
   'external_fabric', 'roof', 'communal_entrance', 'stairwells',
-  'lifts', 'plant_room', 'internal_communal', 'additional',
+  'lifts', 'plant_room', 'meter_reads', 'internal_communal', 'additional',
 ]
 
 // Sections gated behind property flags — omitted if flag is false

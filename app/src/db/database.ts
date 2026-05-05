@@ -1,3 +1,15 @@
+// Local SQLite database for offline-first inspection storage.
+//
+// All inspection data (inspections, observations, photos) is written here first.
+// The sync service reads from here and upserts to Supabase when connectivity allows.
+//
+// Schema changes: add new ALTER TABLE statements to the `migrations` array at the
+// bottom of initDatabase(). Do NOT change DB_VERSION or recreate tables — SQLite
+// on Android does not migrate automatically and users would lose local data.
+//
+// This module is the ONLY place that talks to SQLite. All other files import
+// the exported functions and never touch sqliteConn directly.
+
 import { CapacitorSQLite, SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite'
 import type { LocalInspection, LocalObservation, LocalPhoto, PendingTranscription, SectionKey } from '../types'
 
