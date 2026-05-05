@@ -122,6 +122,7 @@ export function ActiveInspectionScreen() {
     if (queue.length === 0) return
 
     setRetrying(true)
+    setError('')
     for (const pt of queue) {
       try {
         const { data: base64 } = await Filesystem.readFile({ path: pt.audio_path })

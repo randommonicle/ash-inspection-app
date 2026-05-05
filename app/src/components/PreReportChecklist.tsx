@@ -26,6 +26,12 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
     return acc
   }, {} as Record<SectionKey, number>)
 
+  // Synced photos whose section hasn't been assigned by Opus yet (analysis still in flight).
+  // These will still appear in the report — the generator groups unclassified photos into
+  // 'additional' — so they shouldn't block report generation.
+  const pendingAnalysisCount = photos.filter(p => p.synced && !p.section_key).length
+  const photosInFlight = pendingAnalysisCount > 0
+
   // Sections that are auto-N/A based on property flags or optional nature.
   // Lifts are intentionally NOT auto-N/A — they are safety-critical and the
   // inspector should always explicitly confirm whether they're applicable.
@@ -53,7 +59,9 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
   const warningKeys = SECTION_ORDER.filter(key =>
     countsBySection[key] === 0 && photosBySection[key] === 0 && !naSet.has(key)
   )
-  const allOk = warningKeys.length === 0
+  // Allow proceeding if photos are still being classified by Opus — the report
+  // generator will handle unclassified photos and won't produce an empty report.
+  const allOk = warningKeys.length === 0 || photosInFlight
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/50">
@@ -70,9 +78,11 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
         <div className="px-5 pt-2 pb-4 border-b border-gray-100 shrink-0">
           <h2 className="text-lg font-bold text-ash-navy">Pre-Report Checklist</h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            {allOk
-              ? 'All sections covered — ready to generate.'
-              : `${warningKeys.length} section${warningKeys.length !== 1 ? 's' : ''} with no observations. Mark N/A or tap Edit to add notes.`
+            {photosInFlight
+              ? `${pendingAnalysisCount} photo${pendingAnalysisCount !== 1 ? 's' : ''} uploaded — AI is classifying sections. Ready to generate.`
+              : allOk
+                ? 'All sections covered — ready to generate.'
+                : `${warningKeys.length} section${warningKeys.length !== 1 ? 's' : ''} with no observations. Mark N/A or tap Edit to add notes.`
             }
           </p>
         </div>
@@ -168,7 +178,7 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
             disabled={!allOk}
             className="flex-1 py-3 rounded-xl bg-ash-navy text-white font-bold text-sm active:scale-[0.98] transition disabled:opacity-40"
           >
-            {allOk ? 'Generate Report →' : `${warningKeys.length} unresolved`}
+            {photosInFlight ? 'Generate Report →' : allOk ? 'Generate Report →' : `${warningKeys.length} unresolved`}
           </button>
         </div>
       </div>
