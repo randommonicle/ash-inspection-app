@@ -6,10 +6,11 @@ import { join } from 'path'
 
 const execFileAsync = promisify(execFile)
 
-// LibreOffice path — installed on the work PC.
-// If not installed (e.g. home PC), convertDocxToPdf returns null and the
-// pipeline gracefully skips PDF generation, emailing only the DOCX.
-const SOFFICE_PATH = 'C:\\Program Files\\LibreOffice\\program\\soffice.exe'
+// On Linux (Railway), soffice is on PATH via apt. On Windows (local dev),
+// use the full install path. Falls back gracefully if LibreOffice is absent.
+const SOFFICE_PATH = process.platform === 'win32'
+  ? 'C:\\Program Files\\LibreOffice\\program\\soffice.exe'
+  : 'soffice'
 
 /**
  * Converts a DOCX buffer to PDF using LibreOffice headless mode.
