@@ -13,31 +13,27 @@ interface Props {
 }
 
 export function PreReportChecklist({ property, observations, photos, onConfirm, onCancel, onEditSection }: Props) {
+  // Photos-only inspection: inspector took photos but recorded no narrations.
+  // Opus will classify photos into sections during/after sync, so we can't
+  // show per-section coverage yet — but we can still generate the report.
+  const isPhotosOnly = observations.length === 0 && photos.length > 0
+
   // Count observations per section
   const countsBySection = SECTION_ORDER.reduce<Record<SectionKey, number>>((acc, key) => {
     acc[key] = observations.filter(o => o.section_key === key).length
     return acc
   }, {} as Record<SectionKey, number>)
 
-  // Count synced photos with an Opus-assigned section_key per section.
-  // Only synced photos are counted — unsynced ones haven't been analysed by Opus yet.
+  // Count synced + Opus-classified photos per section (only available after analysis)
   const photosBySection = SECTION_ORDER.reduce<Record<SectionKey, number>>((acc, key) => {
     acc[key] = photos.filter(p => p.synced && p.section_key === key).length
     return acc
   }, {} as Record<SectionKey, number>)
 
-  // Synced photos whose section hasn't been assigned by Opus yet (analysis still in flight).
-  // These will still appear in the report — the generator groups unclassified photos into
-  // 'additional' — so they shouldn't block report generation.
-  const pendingAnalysisCount = photos.filter(p => p.synced && !p.section_key).length
-  const photosInFlight = pendingAnalysisCount > 0
-
   // Sections that are auto-N/A based on property flags or optional nature.
-  // Lifts are intentionally NOT auto-N/A — they are safety-critical and the
-  // inspector should always explicitly confirm whether they're applicable.
   const autoNA = new Set<SectionKey>()
   if (!property.has_car_park) autoNA.add('car_park')
-  autoNA.add('additional') // always optional
+  autoNA.add('additional')
 
   const [naSet, setNaSet] = useState<Set<SectionKey>>(() => {
     const initial = new Set<SectionKey>()
@@ -56,12 +52,15 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
     })
   }
 
-  const warningKeys = SECTION_ORDER.filter(key =>
-    countsBySection[key] === 0 && photosBySection[key] === 0 && !naSet.has(key)
-  )
-  // Allow proceeding if photos are still being classified by Opus — the report
-  // generator will handle unclassified photos and won't produce an empty report.
-  const allOk = warningKeys.length === 0 || photosInFlight
+  // For photos-only inspections, skip per-section warnings — Opus assigns sections
+  // at sync time so we genuinely don't know coverage yet. The report will handle it.
+  const warningKeys = isPhotosOnly
+    ? []
+    : SECTION_ORDER.filter(key =>
+        countsBySection[key] === 0 && photosBySection[key] === 0 && !naSet.has(key)
+      )
+
+  const allOk = warningKeys.length === 0
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/50">
@@ -78,8 +77,8 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
         <div className="px-5 pt-2 pb-4 border-b border-gray-100 shrink-0">
           <h2 className="text-lg font-bold text-ash-navy">Pre-Report Checklist</h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            {photosInFlight
-              ? `${pendingAnalysisCount} photo${pendingAnalysisCount !== 1 ? 's' : ''} uploaded — AI is classifying sections. Ready to generate.`
+            {isPhotosOnly
+              ? `${photos.length} photo${photos.length !== 1 ? 's' : ''} captured — AI will classify and describe each area. Ready to generate.`
               : allOk
                 ? 'All sections covered — ready to generate.'
                 : `${warningKeys.length} section${warningKeys.length !== 1 ? 's' : ''} with no observations. Mark N/A or tap Edit to add notes.`
@@ -96,24 +95,29 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
             const hasPhotos  = photoCount > 0
             const covered    = hasObs || hasPhotos
             const isNA       = naSet.has(key)
-            const isWarn     = !covered && !isNA
+            const isWarn     = !covered && !isNA && !isPhotosOnly
+
+            // Photos-only: sections show a neutral "pending" state instead of amber
+            const isPending  = isPhotosOnly && !covered && !isNA
 
             return (
               <div
                 key={key}
                 className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border ${
-                  covered ? 'border-green-100 bg-green-50'
-                  : isNA  ? 'border-gray-100 bg-gray-50'
-                  :         'border-amber-100 bg-amber-50'
+                  covered    ? 'border-green-100 bg-green-50'
+                  : isNA     ? 'border-gray-100 bg-gray-50'
+                  : isPending? 'border-blue-100 bg-blue-50'
+                  :            'border-amber-100 bg-amber-50'
                 }`}
               >
                 {/* Status badge */}
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                  covered ? 'bg-green-500 text-white'
-                  : isNA  ? 'bg-gray-300 text-gray-600'
-                  :         'bg-amber-400 text-white'
+                  covered    ? 'bg-green-500 text-white'
+                  : isNA     ? 'bg-gray-300 text-gray-600'
+                  : isPending? 'bg-blue-400 text-white'
+                  :            'bg-amber-400 text-white'
                 }`}>
-                  {covered ? '✓' : isNA ? '—' : '!'}
+                  {covered ? '✓' : isNA ? '—' : isPending ? '?' : '!'}
                 </div>
 
                 {/* Label + subtext */}
@@ -124,10 +128,16 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
                     {SECTION_LABELS[key]}
                   </p>
                   {hasObs && (
-                    <p className="text-xs text-gray-400">{obsCount} observation{obsCount !== 1 ? 's' : ''}{hasPhotos ? `, ${photoCount} photo${photoCount !== 1 ? 's' : ''}` : ''}</p>
+                    <p className="text-xs text-gray-400">
+                      {obsCount} observation{obsCount !== 1 ? 's' : ''}
+                      {hasPhotos ? `, ${photoCount} photo${photoCount !== 1 ? 's' : ''}` : ''}
+                    </p>
                   )}
                   {!hasObs && hasPhotos && (
                     <p className="text-xs text-green-600">{photoCount} photo{photoCount !== 1 ? 's' : ''} — AI will describe</p>
+                  )}
+                  {isPending && (
+                    <p className="text-xs text-blue-500">AI will assign from photos</p>
                   )}
                   {isWarn && (
                     <p className="text-xs text-amber-600">No observations or photos</p>
@@ -137,8 +147,8 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
                   )}
                 </div>
 
-                {/* Action buttons — only for uncovered sections */}
-                {!covered && (
+                {/* Action buttons — only for uncovered sections in mixed inspections */}
+                {!covered && !isPhotosOnly && (
                   <div className="flex gap-1.5 shrink-0">
                     {isWarn && (
                       <button
@@ -178,7 +188,7 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
             disabled={!allOk}
             className="flex-1 py-3 rounded-xl bg-ash-navy text-white font-bold text-sm active:scale-[0.98] transition disabled:opacity-40"
           >
-            {photosInFlight ? 'Generate Report →' : allOk ? 'Generate Report →' : `${warningKeys.length} unresolved`}
+            {allOk ? 'Generate Report →' : `${warningKeys.length} unresolved`}
           </button>
         </div>
       </div>
