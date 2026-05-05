@@ -350,10 +350,10 @@ export function ActiveInspectionScreen() {
 
       {/* Observation feed */}
       <div ref={feedRef} className="flex-1 overflow-y-auto p-3 space-y-2.5">
-        {observations.length === 0 && !isTranscribing && (
+        {observations.length === 0 && photos.length === 0 && !isTranscribing && (
           <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 py-16 space-y-2">
             <p className="text-4xl">🎙</p>
-            <p className="text-sm">Tap the record button and narrate your observation.<br />Tap again when done. Use × to discard.</p>
+            <p className="text-sm">Tap the record button to narrate, or use the camera to take photos.<br />You can do both, or either.</p>
           </div>
         )}
         {observations.map((obs, idx) => (
@@ -419,13 +419,13 @@ export function ActiveInspectionScreen() {
 
         <button
           onClick={handleComplete}
-          disabled={completing || isTranscribing || observations.length === 0}
+          disabled={completing || isTranscribing || (observations.length === 0 && photos.length === 0)}
           className="w-full py-4 rounded-xl border-2 border-ash-navy text-ash-navy font-bold text-base active:scale-[0.98] transition disabled:opacity-40"
         >
           {completing ? 'Completing…' : '✓  Complete Inspection'}
         </button>
-        {observations.length === 0 && (
-          <p className="text-center text-gray-400 text-xs mt-2">Record at least one observation to complete</p>
+        {observations.length === 0 && photos.length === 0 && (
+          <p className="text-center text-gray-400 text-xs mt-2">Record an observation or take a photo to complete</p>
         )}
       </div>
 
