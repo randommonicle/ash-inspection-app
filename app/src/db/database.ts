@@ -276,6 +276,10 @@ export async function createPhoto(params: {
   return photo
 }
 
+export async function deletePhoto(id: string): Promise<void> {
+  await getDB().run(`DELETE FROM photos WHERE id=?`, [id])
+}
+
 export async function updatePhotoAnalysis(id: string, caption: string, sectionKey?: string): Promise<void> {
   await getDB().run(`UPDATE photos SET caption=?, section_key=? WHERE id=?`, [caption, sectionKey ?? null, id])
 }

@@ -6,17 +6,29 @@ interface Props {
   observation: LocalObservation
   photos: LocalPhoto[]
   onOverride?: () => void
-  /** When provided, shows an "add more" button to continue this observation */
   onAppend?: () => void
-  /** Highlight this card as the active append target */
   isAppendTarget?: boolean
-  /** Highlight this card as the one awaiting confidence confirmation */
   isPendingConfirmation?: boolean
+  onDeletePhoto?: (photoId: string) => void
 }
 
-export function ObservationFeedItem({ observation, photos, onOverride, onAppend, isAppendTarget, isPendingConfirmation }: Props) {
+// 3+ photos all taken within 2 minutes = likely a burst of the same subject
+function detectBurst(photos: LocalPhoto[]): boolean {
+  if (photos.length < 3) return false
+  const times = photos.map(p => new Date(p.created_at).getTime()).sort((a, b) => a - b)
+  return times[times.length - 1] - times[0] < 120_000
+}
+
+export function ObservationFeedItem({ observation, photos, onOverride, onAppend, isAppendTarget, isPendingConfirmation, onDeletePhoto }: Props) {
   const obsPhotos = photos.filter(p => p.observation_id === observation.id)
   const [fullscreenPhoto, setFullscreenPhoto] = useState<LocalPhoto | null>(null)
+
+  const isBurst = detectBurst(obsPhotos)
+
+  const handleDeleteFromFullscreen = (photo: LocalPhoto) => {
+    setFullscreenPhoto(null)
+    onDeletePhoto?.(photo.id)
+  }
 
   return (
     <div className={`bg-white rounded-xl border shadow-sm px-4 py-3 transition-all ${
@@ -47,30 +59,66 @@ export function ObservationFeedItem({ observation, photos, onOverride, onAppend,
       <p className="text-sm text-gray-800 leading-relaxed">{observation.raw_narration}</p>
 
       {obsPhotos.length > 0 && (
-        <div className="flex gap-2 mt-2 flex-wrap">
-          {obsPhotos.map(photo => (
-            <button
-              key={photo.id}
-              onClick={() => setFullscreenPhoto(photo)}
-              className="shrink-0 active:opacity-80 transition"
-            >
-              <img
-                src={photo.web_path ?? photo.local_path}
-                alt="Inspection photo"
-                className="w-20 h-20 object-cover rounded-lg border border-gray-200"
-              />
-            </button>
-          ))}
-        </div>
+        <>
+          {/* Burst warning */}
+          {isBurst && (
+            <div className="mt-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200">
+              <span className="text-amber-500 text-sm">⚠</span>
+              <p className="text-xs text-amber-700 font-medium">
+                {obsPhotos.length} similar photos — tap × to remove duplicates before generating
+              </p>
+            </div>
+          )}
+
+          {/* Thumbnail strip */}
+          <div className="flex gap-2 mt-2 flex-wrap">
+            {obsPhotos.map(photo => (
+              <div key={photo.id} className="relative shrink-0">
+                <button
+                  onClick={() => setFullscreenPhoto(photo)}
+                  className="active:opacity-80 transition"
+                >
+                  <img
+                    src={photo.web_path ?? photo.local_path}
+                    alt="Inspection photo"
+                    className="w-20 h-20 object-cover rounded-lg border border-gray-200"
+                  />
+                </button>
+                {onDeletePhoto && (
+                  <button
+                    onClick={() => onDeletePhoto(photo.id)}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center active:bg-red-600 transition shadow-sm"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
+      {/* Fullscreen viewer */}
       {fullscreenPhoto && (
         <div
           className="fixed inset-0 z-50 bg-black flex flex-col"
           onClick={() => setFullscreenPhoto(null)}
         >
-          {/* Close button */}
-          <div className="flex justify-end p-4 shrink-0">
+          {/* Top bar */}
+          <div className="flex justify-between items-center p-4 shrink-0">
+            {onDeletePhoto ? (
+              <button
+                onClick={e => { e.stopPropagation(); handleDeleteFromFullscreen(fullscreenPhoto) }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/80 text-white text-xs font-semibold active:bg-red-500 transition"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                Delete
+              </button>
+            ) : <div />}
             <button
               onClick={() => setFullscreenPhoto(null)}
               className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center active:bg-white/30 transition"

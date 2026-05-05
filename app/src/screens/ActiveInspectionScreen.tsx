@@ -17,7 +17,7 @@ import {
   getInspection, completeInspection,
   createObservation, getObservationsForInspection,
   updateObservationSection, appendObservationNarration,
-  createPhoto, getPhotosForInspection,
+  createPhoto, getPhotosForInspection, deletePhoto,
   createPendingTranscription, getPendingTranscriptions, deletePendingTranscription,
 } from '../db/database'
 import {
@@ -319,6 +319,15 @@ export function ActiveInspectionScreen() {
     }
   }, [inspectionId, observations])
 
+  const handleDeletePhoto = useCallback(async (photoId: string) => {
+    const photo = photos.find(p => p.id === photoId)
+    await deletePhoto(photoId)
+    setPhotos(prev => prev.filter(p => p.id !== photoId))
+    if (photo?.local_path) {
+      await Filesystem.deleteFile({ path: photo.local_path }).catch(() => {})
+    }
+  }, [photos])
+
   const handleComplete = useCallback(async () => {
     if (!inspectionId) return
     setCompleting(true)
@@ -460,6 +469,7 @@ export function ActiveInspectionScreen() {
             }
             isAppendTarget={appendingToId === obs.id}
             isPendingConfirmation={pending?.observationId === obs.id}
+            onDeletePhoto={handleDeletePhoto}
           />
         ))}
         {isTranscribing && (
@@ -477,12 +487,21 @@ export function ActiveInspectionScreen() {
             <p className="text-xs text-gray-400 mb-2">Unlinked photos</p>
             <div className="flex gap-2 flex-wrap">
               {photos.filter(p => !p.observation_id).map(photo => (
-                <img
-                  key={photo.id}
-                  src={photo.web_path ?? photo.local_path}
-                  alt="Inspection photo"
-                  className="w-20 h-20 object-cover rounded-lg border border-gray-200"
-                />
+                <div key={photo.id} className="relative shrink-0">
+                  <img
+                    src={photo.web_path ?? photo.local_path}
+                    alt="Inspection photo"
+                    className="w-20 h-20 object-cover rounded-lg border border-gray-200"
+                  />
+                  <button
+                    onClick={() => handleDeletePhoto(photo.id)}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center active:bg-red-600 transition shadow-sm"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={3} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
               ))}
             </div>
           </div>
