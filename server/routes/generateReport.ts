@@ -563,6 +563,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
       nextInspection:   nextInspection,
       inspectorName,
       inspectorTitle,
+      inspectorEmail,
       overallSummary,
       observations:     processedObservations,
       photos:           reportPhotos,

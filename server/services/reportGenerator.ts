@@ -106,6 +106,7 @@ export interface ReportData {
   nextInspection: string | null
   inspectorName: string
   inspectorTitle: string
+  inspectorEmail: string
   overallSummary: string
   observations: ReportObservation[]
   photos: ReportPhoto[]
@@ -139,7 +140,7 @@ function t(text: string, opts: {
 }
 
 // ── Header ───────────────────────────────────────────────────────────────────
-function buildHeader(): Header {
+function buildHeader(inspectorEmail: string): Header {
   return new Header({
     children: [
       new Table({
@@ -161,9 +162,7 @@ function buildHeader(): Header {
                     children: [t('1-5 Kew Place, Cheltenham GL53 7NQ', { size: 17, color: C.labelText })],
                   }),
                   new Paragraph({
-                    // TODO [PRODUCTION]: Replace ben@ashproperty.co.uk with the firm's
-                    // general enquiries address (e.g. info@ashproperty.co.uk) once confirmed.
-                    children: [t('T: 01242 237274  |  ben@ashproperty.co.uk  |  ashproperty.co.uk', { size: 17, color: C.labelText })],
+                    children: [t(`T: 01242 237274  |  ${inspectorEmail}  |  ashproperty.co.uk`, { size: 17, color: C.labelText })],
                   }),
                 ],
               }),
@@ -893,7 +892,7 @@ export async function buildReportDocx(data: ReportData): Promise<Buffer> {
           margin: { top: 1000, right: 1000, bottom: 1000, left: 1000, header: 708, footer: 708 },
         },
       },
-      headers: { default: buildHeader() },
+      headers: { default: buildHeader(data.inspectorEmail) },
       footers: { default: buildFooter() },
       children,
     }],
