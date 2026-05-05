@@ -266,6 +266,10 @@ export async function createPhoto(params: {
   return photo
 }
 
+export async function updatePhotoCaption(id: string, caption: string): Promise<void> {
+  await getDB().run(`UPDATE photos SET caption=? WHERE id=?`, [caption, id])
+}
+
 export async function getPhotosForInspection(inspection_id: string): Promise<LocalPhoto[]> {
   const result = await getDB().query(
     `SELECT * FROM photos WHERE inspection_id=? ORDER BY created_at ASC`,

@@ -6,6 +6,7 @@ import {
   getObservationsForInspection,
   getPhotosForInspection,
   markInspectionSynced,
+  updatePhotoCaption,
 } from '../db/database'
 import type { LocalInspection } from '../types'
 
@@ -24,8 +25,18 @@ async function triggerOpusAnalysis(photoId: string, storagePath: string): Promis
   })
   if (!res.ok) {
     console.error(`[SYNC] Opus analysis failed for ${photoId}: HTTP ${res.status}`)
-  } else {
-    console.log(`[SYNC] Opus analysis complete for ${photoId}`)
+    return
+  }
+  // Write the suggested_caption back to local SQLite so the fullscreen viewer
+  // can show it without needing a separate Supabase fetch.
+  try {
+    const result = await res.json() as { suggested_caption?: string }
+    if (result.suggested_caption) {
+      await updatePhotoCaption(photoId, result.suggested_caption)
+      console.log(`[SYNC] Caption saved locally for ${photoId}: "${result.suggested_caption}"`)
+    }
+  } catch {
+    // Non-fatal — caption just won't show in the viewer for this photo
   }
 }
 
