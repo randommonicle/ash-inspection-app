@@ -15,11 +15,20 @@ const port = process.env.PORT ?? 3001
 // and logging use the real client IP rather than the proxy's IP.
 app.set('trust proxy', 1)
 
-// TODO [PRODUCTION]: Replace the wildcard CORS origin with the specific
-// domain(s) the app will be served from, e.g.:
-//   app.use(cors({ origin: ['https://ash-inspection-app-production.up.railway.app'] }))
-// Wildcard is acceptable during development but tighten before public launch.
-app.use(cors())
+// Allowed origins: the Railway server itself (for any browser-based tooling)
+// and the Capacitor app scheme used on Android devices.
+const ALLOWED_ORIGINS = [
+  'https://ash-inspection-app-production.up.railway.app',
+  'https://localhost',          // Capacitor dev
+  'capacitor://localhost',      // Capacitor Android (androidScheme: https)
+]
+app.use(cors({
+  origin: (origin, cb) => {
+    // Allow requests with no origin (native Android HTTP, Postman, Railway health checks)
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true)
+    cb(new Error(`CORS: origin '${origin}' not allowed`))
+  },
+}))
 
 // IMPORTANT: /api/transcribe MUST be mounted before express.json() because it
 // accepts a raw binary audio body. express.json() would reject the audio blob
