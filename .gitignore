@@ -10,9 +10,11 @@ node_modules/
 app/dist/
 server/dist/
 
-# Capacitor generated (can be regenerated with `npx cap sync`)
-app/android/
+# iOS can still be regenerated — no custom config there yet
 app/ios/
+
+# Android is tracked because it contains custom signing config in build.gradle.
+# The keystore (*.jks) and local.properties are excluded via app/android/.gitignore.
 
 # OS
 .DS_Store

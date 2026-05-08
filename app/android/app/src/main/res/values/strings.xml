@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ASH Inspections</string>
+    <string name="title_activity_main">ASH Inspections</string>
+    <string name="package_name">co.uk.ashproperty.inspection</string>
+    <string name="custom_url_scheme">co.uk.ashproperty.inspection</string>
+</resources>
