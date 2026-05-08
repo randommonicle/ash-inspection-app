@@ -6,7 +6,10 @@
     "dev": "node --env-file=.env node_modules/tsx/dist/cli.mjs watch index.ts",
     "restart": "npx kill-port 3001 && node --env-file=.env node_modules/tsx/dist/cli.mjs watch index.ts",
     "start": "node dist/index.js",
-    "build": "tsc"
+    "build": "tsc",
+    "test:unit": "node --require ./node_modules/tsx/dist/cjs/index.cjs --test tests/unit.test.ts",
+    "test:integration": "node --env-file=.env --require ./node_modules/tsx/dist/cjs/index.cjs --test tests/integration.test.ts",
+    "test": "npm run test:unit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

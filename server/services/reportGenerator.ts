@@ -21,8 +21,11 @@ const C = {
   caption:   '888888',
 }
 
-// ── Section metadata ──────────────────────────────────────────────────────────
-const SECTION_LABELS: Record<string, string> = {
+// ── Section metadata ─────────────────────────────────────────────────────────
+// Exported so tests can verify completeness without going through the full
+// report pipeline. If a section key is missing from either constant it will
+// show up as a blank heading in the Word document — tests catch this early.
+export const SECTION_LABELS: Record<string, string> = {
   external_approach: 'External Approach and Entrance',
   grounds:           'Grounds and Landscaping',
   bin_store:         'Bin Store and Waste Facilities',
@@ -38,7 +41,7 @@ const SECTION_LABELS: Record<string, string> = {
   additional:        'Additional / Property-Specific Areas',
 }
 
-const SECTION_ORDER = [
+export const SECTION_ORDER = [
   'external_approach', 'grounds', 'bin_store', 'car_park',
   'external_fabric', 'roof', 'communal_entrance', 'stairwells',
   'lifts', 'plant_room', 'meter_reads', 'internal_communal', 'additional',
