@@ -11,6 +11,8 @@ interface Props {
   onCancel: () => void
   onEditSection: (sectionKey: SectionKey) => void
   onUpdatePropertyFlag: (flag: 'has_car_park' | 'has_lift') => Promise<void>
+  /** Reassign an existing observation to a different section — updates SQLite and refreshes the checklist */
+  onReassignObservation?: (observationId: string, newSection: SectionKey) => Promise<void>
 }
 
 // Sections that map to a property feature flag.
@@ -31,7 +33,7 @@ interface PendingFlag {
   label: string
 }
 
-export function PreReportChecklist({ property, observations, photos, onConfirm, onCancel, onEditSection, onUpdatePropertyFlag }: Props) {
+export function PreReportChecklist({ property, observations, photos, onConfirm, onCancel, onEditSection, onUpdatePropertyFlag, onReassignObservation }: Props) {
   const isPhotosOnly = observations.length === 0 && photos.length > 0
 
   const countsBySection = SECTION_ORDER.reduce<Record<SectionKey, number>>((acc, key) => {
@@ -61,6 +63,11 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
   // for a property that currently has that feature.
   const [pendingFlag, setPendingFlag] = useState<PendingFlag | null>(null)
   const [updatingFlag, setUpdatingFlag] = useState(false)
+
+  // "Move obs here" picker — set to the target section key when the PM wants to
+  // reassign an existing observation from another section into an empty one.
+  const [movingToSection, setMovingToSection] = useState<SectionKey | null>(null)
+  const [reassigning, setReassigning] = useState(false)
 
   const toggleNA = (key: SectionKey) => {
     setNaSet(prev => {
@@ -189,12 +196,27 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
                   {!covered && (isPending || isWarn || isNA) && (
                     <div className="flex gap-1.5 shrink-0">
                       {(isPending || isWarn) && (
-                        <button
-                          onClick={() => onEditSection(key)}
-                          className="text-xs px-2.5 py-1 rounded-lg font-semibold bg-ash-navy text-white active:opacity-70 transition"
-                        >
-                          Edit
-                        </button>
+                        <>
+                          {/* "Move" — reassign an existing observation from another section */}
+                          {onReassignObservation && observations.some(o => o.section_key !== key) && (
+                            <button
+                              onClick={() => setMovingToSection(prev => prev === key ? null : key)}
+                              className={`text-xs px-2.5 py-1 rounded-lg font-semibold transition active:scale-95 ${
+                                movingToSection === key
+                                  ? 'bg-ash-navy text-white'
+                                  : 'bg-ash-light text-ash-navy active:bg-ash-navy/10'
+                              }`}
+                            >
+                              Move
+                            </button>
+                          )}
+                          <button
+                            onClick={() => onEditSection(key)}
+                            className="text-xs px-2.5 py-1 rounded-lg font-semibold bg-ash-navy text-white active:opacity-70 transition"
+                          >
+                            Edit
+                          </button>
+                        </>
                       )}
                       <button
                         onClick={() => toggleNA(key)}
@@ -209,6 +231,59 @@ export function PreReportChecklist({ property, observations, photos, onConfirm, 
                     </div>
                   )}
                 </div>
+
+                {/* "Move obs here" picker — shows existing observations from other sections so
+                    the PM can reassign a misclassified one without leaving the checklist */}
+                {movingToSection === key && onReassignObservation && (
+                  <div className="mt-1 mx-1 px-3 py-2.5 rounded-xl bg-ash-navy/5 border border-ash-navy/20 space-y-2">
+                    <p className="text-xs font-semibold text-ash-navy">
+                      Pick an observation to move here
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Select a wrongly-classified observation — it will be reassigned to <span className="font-medium">{SECTION_LABELS[key]}</span>.
+                    </p>
+                    <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                      {observations
+                        .filter(o => o.section_key !== key)
+                        .map(o => (
+                          <button
+                            key={o.id}
+                            disabled={reassigning}
+                            onClick={async () => {
+                              setReassigning(true)
+                              try {
+                                await onReassignObservation(o.id, key)
+                                setMovingToSection(null)
+                              } finally {
+                                setReassigning(false)
+                              }
+                            }}
+                            className="w-full text-left px-3 py-2 rounded-lg border border-ash-navy/10 bg-white active:bg-ash-light transition disabled:opacity-50"
+                          >
+                            <span className="text-[10px] font-semibold text-ash-mid bg-ash-light px-1.5 py-0.5 rounded-full">
+                              {SECTION_LABELS[o.section_key]}
+                            </span>
+                            <p className="text-xs text-gray-700 mt-1 leading-relaxed line-clamp-2">
+                              {o.raw_narration}
+                            </p>
+                          </button>
+                        ))
+                      }
+                    </div>
+                    {reassigning && (
+                      <div className="flex items-center gap-2 justify-center py-1">
+                        <div className="w-3 h-3 border-2 border-ash-navy border-t-transparent rounded-full animate-spin" />
+                        <span className="text-xs text-ash-navy">Moving…</span>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setMovingToSection(null)}
+                      className="w-full py-1.5 rounded-lg border border-gray-200 text-gray-500 text-xs font-medium active:bg-gray-50 transition"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
 
                 {/* Feature-flag prompt — appears inline below the row */}
                 {pendingFlag?.section === key && (

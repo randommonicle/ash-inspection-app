@@ -46,9 +46,13 @@ export function ObservationFeedItem({ observation, photos, onOverride, onAppend,
         {onOverride && (
           <button
             onClick={onOverride}
-            className="text-xs text-ash-mid font-medium px-3 py-1.5 rounded-md bg-ash-light active:opacity-60 min-h-[36px]"
+            className="flex items-center gap-1 text-xs text-ash-navy font-semibold px-2.5 py-1.5 rounded-lg border border-ash-navy/25 bg-white active:bg-ash-light active:opacity-70 transition min-h-[36px]"
           >
-            change section
+            {/* Pencil icon */}
+            <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Z" />
+            </svg>
+            Change section
           </button>
         )}
         <span className="ml-auto text-[10px] text-gray-400">

@@ -2,15 +2,22 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../contexts/AuthContext'
-import { getInspectionsForProperty, createInspection, deleteInspection, markReportSent, getObservationsForInspection, getPhotosForInspection } from '../db/database'
+import { useSync } from '../hooks/useSync'
+import { getInspectionsForProperty, createInspection, deleteInspection, markReportSent, getObservationsForInspection, getPhotosForInspection, updateObservationSection } from '../db/database'
 import { generateReport } from '../services/report'
 import { PreReportChecklist } from '../components/PreReportChecklist'
-import type { Property, LocalInspection, LocalObservation, LocalPhoto } from '../types'
+import type { Property, LocalInspection, LocalObservation, LocalPhoto, SectionKey } from '../types'
+import { SECTION_TEMPLATE_ORDER } from '../types'
 
 export function PropertyDetailScreen() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { profile } = useAuth()
+  const { status: syncStatus, triggerSync } = useSync()
+
+  // Trigger sync once on mount if there are completed-but-unsynced inspections.
+  // Uses a ref so it only fires once per screen visit, not on every re-render.
+  const syncTriggeredRef = useRef(false)
 
   const [property, setProperty]             = useState<Property | null>(null)
   const [inspections, setInspections]       = useState<LocalInspection[]>([])
@@ -76,6 +83,17 @@ export function PropertyDetailScreen() {
     }, 2000)
     return () => clearInterval(timer)
   }, [id, inspections])
+
+  // Trigger a sync pass once when we arrive at this screen and there are pending
+  // inspections (e.g. navigated here from ActiveInspectionScreen after completing).
+  // syncTriggeredRef prevents this from firing repeatedly on every re-render.
+  useEffect(() => {
+    if (syncTriggeredRef.current) return
+    const hasPending = inspections.some(i => i.status === 'completed' && !i.synced)
+    if (!hasPending) return
+    syncTriggeredRef.current = true
+    triggerSync().catch(() => {})
+  }, [inspections, triggerSync])
 
   // Opens the pre-report checklist before committing to generation
   const handleOpenChecklist = useCallback(async (inspectionId: string) => {
@@ -249,9 +267,19 @@ export function PropertyDetailScreen() {
                         <span className="text-xs shrink-0 text-green-500">✓</span>
                       )}
                       {ins.status === 'completed' && !ins.synced && (
-                        <span className="flex items-center gap-1 shrink-0">
-                          <span className="w-3 h-3 border-2 border-ash-mid border-t-transparent rounded-full animate-spin inline-block" />
-                          <span className="text-xs text-ash-mid">Uploading…</span>
+                        <span className={`flex items-center gap-1 shrink-0 text-xs ${
+                          syncStatus === 'error'  ? 'text-red-500'   :
+                          syncStatus === 'queued' ? 'text-amber-600' :
+                          'text-ash-mid'
+                        }`}>
+                          {syncStatus === 'error' ? '⚠' :
+                           syncStatus === 'queued' ? '⏳' :
+                           <span className="w-3 h-3 border-2 border-ash-mid border-t-transparent rounded-full animate-spin inline-block" />
+                          }
+                          {syncStatus === 'error'  ? 'Upload failed' :
+                           syncStatus === 'queued' ? 'Offline'       :
+                           'Uploading…'
+                          }
                         </span>
                       )}
                       <button
@@ -265,6 +293,36 @@ export function PropertyDetailScreen() {
                     </div>
                     {isActive && (
                       <p className="text-xs text-ash-mid mt-1">Tap to resume →</p>
+                    )}
+                    {/* Sync status panel — shown for completed-but-not-yet-uploaded inspections */}
+                    {ins.status === 'completed' && !ins.synced && (
+                      <div className="mt-2 space-y-1.5">
+                        {syncStatus === 'error' ? (
+                          <>
+                            <p className="text-xs text-red-500 text-center">
+                              Upload failed — data is saved locally, no progress lost
+                            </p>
+                            <button
+                              onClick={e => { e.stopPropagation(); triggerSync().catch(() => {}) }}
+                              className="w-full py-2 rounded-lg border border-red-200 text-red-500 text-xs font-semibold active:bg-red-50 transition"
+                            >
+                              Retry Upload
+                            </button>
+                          </>
+                        ) : syncStatus === 'queued' ? (
+                          <>
+                            <p className="text-xs text-amber-600 text-center">Offline — will upload when connected</p>
+                            <p className="text-[10px] text-gray-400 text-center">All data saved locally — no progress lost</p>
+                          </>
+                        ) : (
+                          <>
+                            <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-ash-mid rounded-full animate-pulse w-2/3" />
+                            </div>
+                            <p className="text-[10px] text-gray-400 text-center">Uploading to cloud — data saved locally</p>
+                          </>
+                        )}
+                      </div>
                     )}
                     {/* Generate report — only shown for synced completed inspections */}
                     {ins.status === 'completed' && ins.synced && (
@@ -358,6 +416,19 @@ export function PropertyDetailScreen() {
             })
             // Update local state so the checklist reflects the new flag immediately
             setProperty(prev => prev ? { ...prev, [flag]: false } : prev)
+          }}
+          onReassignObservation={async (observationId: string, newSection: SectionKey) => {
+            // Update SQLite so the change persists and syncs to Supabase next time
+            await updateObservationSection(observationId, newSection, SECTION_TEMPLATE_ORDER[newSection])
+            // Reflect the reassignment in the checklist immediately — no navigation needed
+            setChecklist(prev => prev ? {
+              ...prev,
+              observations: prev.observations.map(o =>
+                o.id === observationId
+                  ? { ...o, section_key: newSection, template_order: SECTION_TEMPLATE_ORDER[newSection], classification_conf: 'manual' as const }
+                  : o
+              ),
+            } : prev)
           }}
         />
       )}

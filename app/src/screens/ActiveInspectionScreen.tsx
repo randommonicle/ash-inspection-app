@@ -45,7 +45,12 @@ export function ActiveInspectionScreen() {
   const [inspection, setInspection]     = useState<LocalInspection | null>(null)
   const [observations, setObservations] = useState<LocalObservation[]>([])
   const [photos, setPhotos]             = useState<LocalPhoto[]>([])
-  const [isTranscribing, setIsTranscribing] = useState(false)
+  // Each in-flight transcription gets a unique key pushed into this array.
+  // The RecordButton and feed spinner both derive from its length — multiple
+  // recordings can be transcribing simultaneously without blocking each other.
+  const [processingItems, setProcessingItems] = useState<string[]>([])
+  const isTranscribing = processingItems.length > 0   // convenience alias for visual indicators
+
   const [currentSection, setCurrentSection] = useState<SectionKey | null>(jumpToSection ?? null)
   const [elapsed, setElapsed]           = useState(0)
   const [completing, setCompleting]     = useState(false)
@@ -159,7 +164,11 @@ export function ActiveInspectionScreen() {
 
   const handleRecordingComplete = useCallback(async (blob: Blob) => {
     if (!inspectionId || !profile || !inspection) return
-    setIsTranscribing(true)
+
+    // Each recording gets its own unique key so multiple transcriptions can run
+    // simultaneously without blocking each other or the RecordButton.
+    const itemKey = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    setProcessingItems(prev => [...prev, itemKey])
     setError('')
 
     // Capture and clear append mode before any async work
@@ -254,7 +263,8 @@ export function ActiveInspectionScreen() {
         setError(err instanceof Error ? err.message : 'Transcription failed')
       }
     } finally {
-      setIsTranscribing(false)
+      // Remove this recording's placeholder from the processing queue
+      setProcessingItems(prev => prev.filter(k => k !== itemKey))
       if (!keepAudio && savedAudioPath) {
         await Filesystem.deleteFile({ path: savedAudioPath }).catch(() => {})
       }
@@ -451,7 +461,7 @@ export function ActiveInspectionScreen() {
 
       {/* Observation feed */}
       <div ref={feedRef} className="flex-1 overflow-y-auto p-3 space-y-2.5">
-        {observations.length === 0 && photos.length === 0 && !isTranscribing && (
+        {observations.length === 0 && photos.length === 0 && processingItems.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 py-16 space-y-2">
             <p className="text-4xl">🎙</p>
             <p className="text-sm">Tap the record button to narrate, or use the camera to take photos.<br />You can do both, or either.</p>
@@ -472,12 +482,13 @@ export function ActiveInspectionScreen() {
             onDeletePhoto={handleDeletePhoto}
           />
         ))}
-        {isTranscribing && (
-          <div className="bg-white rounded-xl border border-ash-light shadow-sm px-4 py-3 flex items-center gap-3">
+        {/* One placeholder card per in-flight transcription — PM can record again immediately */}
+        {processingItems.map(key => (
+          <div key={key} className="bg-white rounded-xl border border-ash-light shadow-sm px-4 py-3 flex items-center gap-3">
             <div className="w-4 h-4 border-2 border-ash-mid border-t-transparent rounded-full animate-spin shrink-0" />
             <span className="text-sm text-gray-500">Transcribing &amp; classifying…</span>
           </div>
-        )}
+        ))}
         {error && (
           <p className="text-center text-red-500 text-sm px-4">{error}</p>
         )}
@@ -519,7 +530,7 @@ export function ActiveInspectionScreen() {
             rightSlot={
               <button
                 onClick={handleCamera}
-                disabled={isTranscribing || completing}
+                disabled={completing}
                 className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center active:scale-95 transition disabled:opacity-40"
               >
                 <CameraIcon />
@@ -530,7 +541,7 @@ export function ActiveInspectionScreen() {
 
         <button
           onClick={handleComplete}
-          disabled={completing || isTranscribing || (observations.length === 0 && photos.length === 0)}
+          disabled={completing || processingItems.length > 0 || (observations.length === 0 && photos.length === 0)}
           className="w-full py-4 rounded-xl border-2 border-ash-navy text-ash-navy font-bold text-base active:scale-[0.98] transition disabled:opacity-40"
         >
           {completing ? 'Completing…' : '✓  Complete Inspection'}

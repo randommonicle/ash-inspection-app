@@ -38,7 +38,7 @@ export function RecordButton({ onRecordingComplete, disabled, isTranscribing, ap
   }, [])
 
   const startRecording = useCallback(async () => {
-    if (disabled || isTranscribing) return
+    if (disabled) return
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
@@ -70,7 +70,7 @@ export function RecordButton({ onRecordingComplete, disabled, isTranscribing, ap
     } catch {
       alert('Microphone access is required. Please enable it in your device Settings.')
     }
-  }, [disabled, isTranscribing, onRecordingComplete, stopAndSubmit])
+  }, [disabled, onRecordingComplete, stopAndSubmit])
 
   const handleTap = useCallback(() => {
     if (isRec) {
@@ -105,7 +105,7 @@ export function RecordButton({ onRecordingComplete, disabled, isTranscribing, ap
       <p className={`text-xs h-4 text-center ${
         isRec ? 'text-ash-red font-medium' : appendMode ? 'text-ash-mid font-medium' : 'text-gray-400'
       }`}>
-        {isTranscribing ? 'Transcribing…' : isRec ? 'Tap to stop' : idleLabel}
+        {isRec ? 'Tap to stop' : isTranscribing ? `Processing…` : idleLabel}
       </p>
 
       {/* Button row — cancel appears to the right when recording */}
@@ -128,7 +128,7 @@ export function RecordButton({ onRecordingComplete, disabled, isTranscribing, ap
         {/* Record / stop button */}
         <button
           onClick={handleTap}
-          disabled={disabled || isTranscribing}
+          disabled={disabled}
           className={`
             w-20 h-20 rounded-full border-4 flex items-center justify-center
             transition-all touch-none select-none
