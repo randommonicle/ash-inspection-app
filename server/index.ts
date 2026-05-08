@@ -8,6 +8,7 @@ import generateReportRouter from './routes/generateReport'
 import transcribeRouter from './routes/transcribe'
 import bugReportRouter from './routes/bugReport'
 import adminRouter from './routes/admin'
+import versionRouter from './routes/version'
 import { startCleanupSchedule } from './services/cleanup'
 import { globalLimiter } from './middleware/rateLimits'
 
@@ -58,6 +59,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 })
 
 app.get('/health', (_req, res) => res.json({ ok: true }))
+app.use('/api/version', versionRouter)   // public — no auth, checked before login
 app.use('/api/classify', classifyRouter)
 app.use('/api/bug-report', bugReportRouter)
 app.use('/api/analyse-photo', analysePhotoRouter)

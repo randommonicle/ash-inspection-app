@@ -1,8 +1,15 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import pkg from './package.json'
 
+// __APP_VERSION__ is injected at build time from package.json so the app can
+// compare itself against the version returned by /api/version and prompt the
+// user to install an update. Bump package.json "version" with each release.
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   build: {
     outDir: 'dist',
     sourcemap: true,

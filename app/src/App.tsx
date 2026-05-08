@@ -8,6 +8,8 @@ import { RegisterScreen } from './screens/RegisterScreen'
 import { PropertyListScreen } from './screens/PropertyListScreen'
 import { PropertyDetailScreen } from './screens/PropertyDetailScreen'
 import { ActiveInspectionScreen } from './screens/ActiveInspectionScreen'
+import { UpdatePrompt } from './components/UpdatePrompt'
+import { useUpdateCheck } from './hooks/useUpdateCheck'
 import { initDatabase } from './db/database'
 
 function BackButtonHandler() {
@@ -31,6 +33,7 @@ function BackButtonHandler() {
 
 function AppRoutes() {
   const { session, loading } = useAuth()
+  const { updateInfo, dismiss } = useUpdateCheck()
 
   useEffect(() => {
     if (session) {
@@ -43,6 +46,10 @@ function AppRoutes() {
   return (
     <BrowserRouter>
       <BackButtonHandler />
+      {/* Update prompt — only shown when logged in so it never blocks the login screen */}
+      {session && updateInfo && (
+        <UpdatePrompt info={updateInfo} onDismiss={dismiss} />
+      )}
       <Routes>
         <Route
           path="/login"
