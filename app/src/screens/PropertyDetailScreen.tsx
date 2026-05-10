@@ -4,7 +4,7 @@ import { supabase } from '../services/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { useSync } from '../hooks/useSync'
 import { getInspectionsForProperty, createInspection, deleteInspection, markReportSent, getObservationsForInspection, getPhotosForInspection, updateObservationSection, markInspectionUnsynced } from '../db/database'
-import { generateReport } from '../services/report'
+import { generateReport, ReportError } from '../services/report'
 import { PreReportChecklist } from '../components/PreReportChecklist'
 import type { Property, LocalInspection, LocalObservation, LocalPhoto, SectionKey } from '../types'
 import { SECTION_TEMPLATE_ORDER } from '../types'
@@ -24,6 +24,10 @@ export function PropertyDetailScreen() {
   const [starting, setStarting]             = useState(false)
   const [generatingId, setGeneratingId]     = useState<string | null>(null)
   const [reportResult, setReportResult]     = useState<Record<string, 'sent' | 'error'>>({})
+  // Per-inspection failure detail — populated only when the server returned a
+  // staged error envelope ({ok:false, stage, message}). Used to show "failed
+  // while sending the email" rather than a generic "report failed".
+  const [reportErrorStage, setReportErrorStage] = useState<Record<string, string>>({})
   const [progress, setProgress]             = useState(0)
   const [progressStage, setProgressStage]   = useState('')
   const [error, setError]                   = useState('')
@@ -137,15 +141,21 @@ export function PropertyDetailScreen() {
       setProgress(100)
       setProgressStage('Report sent to your email ✓')
       setReportResult(prev => ({ ...prev, [inspectionId]: 'sent' }))
+      setReportErrorStage(prev => { const n = { ...prev }; delete n[inspectionId]; return n })
       // Persist report_sent to SQLite so "Regenerate" label survives logout/re-login
       await markReportSent(inspectionId)
       setInspections(prev => prev.map(i => i.id === inspectionId ? { ...i, report_sent: true } : i))
     } catch (err: unknown) {
-      console.error('[PROPERTY DETAIL] Report generation failed:', err instanceof Error ? err.message : err)
+      const stageLabel = err instanceof ReportError ? err.stageLabel : ''
+      console.error(
+        `[PROPERTY DETAIL] Report generation failed${stageLabel ? ` while ${stageLabel}` : ''}:`,
+        err instanceof Error ? err.message : err,
+      )
       if (progressIntervalRef.current) { clearInterval(progressIntervalRef.current); progressIntervalRef.current = null }
       setProgress(0)
       setProgressStage('')
       setReportResult(prev => ({ ...prev, [inspectionId]: 'error' }))
+      setReportErrorStage(prev => ({ ...prev, [inspectionId]: stageLabel }))
     } finally {
       setGeneratingId(null)
     }
@@ -343,7 +353,11 @@ export function PropertyDetailScreen() {
 
                         {/* Completion / error message */}
                         {generatingId !== ins.id && reportResult[ins.id] === 'error' && (
-                          <p className="text-xs text-red-500 text-center">Report failed — please try again</p>
+                          <p className="text-xs text-red-500 text-center">
+                            {reportErrorStage[ins.id]
+                              ? `Failed while ${reportErrorStage[ins.id]} — tap Retry`
+                              : 'Report failed — please try again'}
+                          </p>
                         )}
                         {generatingId !== ins.id && (ins.report_sent || reportResult[ins.id] === 'sent') && (
                           <p className="text-xs text-green-600 text-center font-medium">Report sent to your email ✓</p>

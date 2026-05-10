@@ -19,6 +19,11 @@ export function RecordButton({ onRecordingComplete, disabled, isTranscribing, ap
   const timerRef    = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [isRec, setIsRec] = useState(false)
+  // Inline error replaces the browser-native alert() previously used for
+  // mic-permission failures. PropOS convention: inline error messages with an
+  // actionable next step; never alert() on a regulated/field workflow because
+  // it steals focus and breaks the recording flow.
+  const [error, setError] = useState<string | null>(null)
 
   const stopAndSubmit = useCallback(() => {
     if (!recorderRef.current) return
@@ -39,6 +44,7 @@ export function RecordButton({ onRecordingComplete, disabled, isTranscribing, ap
 
   const startRecording = useCallback(async () => {
     if (disabled) return
+    setError(null)
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
@@ -68,7 +74,9 @@ export function RecordButton({ onRecordingComplete, disabled, isTranscribing, ap
       // Auto-stop after max duration
       timerRef.current = setTimeout(stopAndSubmit, MAX_DURATION_MS)
     } catch {
-      alert('Microphone access is required. Please enable it in your device Settings.')
+      // Most common cause: permission denied. Show inline so the recording
+      // surface isn't taken over by an OS alert mid-inspection.
+      setError('Microphone access blocked. Open Settings → Apps → ASH Inspections → Permissions → Microphone, then try again.')
     }
   }, [disabled, onRecordingComplete, stopAndSubmit])
 
@@ -84,6 +92,13 @@ export function RecordButton({ onRecordingComplete, disabled, isTranscribing, ap
 
   return (
     <div className="flex flex-col items-center gap-1 select-none">
+
+      {/* Inline error — non-blocking. Auto-dismissed on next successful start. */}
+      {error && (
+        <div className="w-full max-w-xs mb-1 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 leading-snug">
+          {error}
+        </div>
+      )}
 
       {/* Waveform */}
       <div className="flex items-end gap-[3px] h-8">

@@ -16,9 +16,11 @@ export interface ReportEmailParams {
 export async function sendReportEmail(params: ReportEmailParams): Promise<void> {
   const { to, inspectorName, propertyName, propertyRef, inspectionDate, docxBuffer, filename, pdfBuffer } = params
 
-  // TODO [PRODUCTION]: Remove REPORT_TO_OVERRIDE from server/.env entirely.
-  // With it set, ALL reports go to one address regardless of who's logged in.
-  // Without it, each report goes to the inspector's own email (the correct behaviour).
+  // FORWARD: PROD-GATE — remove REPORT_TO_OVERRIDE from Railway Variables (and
+  // delete this fallback) before client-facing use. With the env var set, every
+  // report is routed to one address regardless of which inspector generated it;
+  // useful for dev/field tests, unacceptable in production. Grep "PROD-GATE"
+  // across the repo for the full manifest of PoC-grade compromises to remove.
   const recipient = process.env.REPORT_TO_OVERRIDE ?? to
   console.log(`[EMAIL] Sending report to ${recipient} for ${propertyRef} — ${propertyName}`)
 

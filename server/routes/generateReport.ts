@@ -264,8 +264,14 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
 
   console.log(`[REPORT] User ${req.userId} requested report for inspection ${inspection_id}`)
 
+  // Stage tracker — PropOS convention: pipeline routes return {ok:false, stage,
+  // message} so the client can surface where the failure occurred. Update this
+  // before each numbered stage below; the catch at the bottom reads it.
+  let currentStage = 'init'
+
   try {
     // ── 1. Fetch inspection, inspector, and property details ──────────────────
+    currentStage = 'fetch_inspection'
     const { data: inspection, error: inspErr } = await supabase
       .from('inspections')
       .select('*, users(full_name, email, job_title), properties(name, ref, address, number_of_units, management_company, has_car_park, has_lift, has_roof_access)')
@@ -317,6 +323,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     const logCtx: LogCtx = { inspectionId: inspection_id, userId: req.userId! }
 
     // ── 2. Fetch and process observations ─────────────────────────────────────
+    currentStage = 'process_observations'
     const { data: rawObs, error: obsErr } = await supabase
       .from('observations')
       .select('id, section_key, template_order, raw_narration, processed_text, action_text, risk_level')
@@ -363,6 +370,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     }
 
     // ── 3. Fetch photos, download image data, run any late Opus analysis ─────
+    currentStage = 'fetch_photos'
     const { data: rawPhotos, error: photoErr } = await supabase
       .from('photos')
       .select('id, observation_id, storage_path, caption, opus_description')
@@ -417,6 +425,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     }
 
     // ── 4. Synthesise observations for sections that have photos but no narration
+    currentStage = 'synthesise_photo_observations'
     const SECTION_ORDER_FOR_SYNTHESIS = [
       'external_approach', 'grounds', 'bin_store', 'car_park',
       'external_fabric', 'roof', 'communal_entrance', 'stairwells',
@@ -479,6 +488,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     processedObservations.sort((a, b) => a.template_order - b.template_order)
 
     // ── 5. Identify recurring items from previous inspection ──────────────────
+    currentStage = 'identify_recurring_items'
     let recurringItems: RecurringItem[] = []
     try {
       // Find the most recent completed inspection for this property BEFORE this one
@@ -531,6 +541,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     }
 
     // ── 6. Generate summary + fetch weather concurrently ─────────────────────
+    currentStage = 'summary_and_weather'
     const [overallSummary, weatherStr] = await Promise.all([
       processedObservations.length > 0
         ? generateSummary(processedObservations, logCtx).catch((err) => {
@@ -550,6 +561,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     }) + ' (projected)'
 
     // ── 7. Build Word document ────────────────────────────────────────────────
+    currentStage = 'build_docx'
     const docxBuffer = await buildReportDocx({
       propertyName,
       propertyRef,
@@ -573,6 +585,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     })
 
     // ── 8. Upload to Supabase Storage ─────────────────────────────────────────
+    currentStage = 'upload_docx'
     const storagePath = `${inspection.property_id}/${inspection_id}/report.docx`
     const { error: uploadErr } = await supabase.storage
       .from('inspection-files')
@@ -594,10 +607,12 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     }).eq('id', inspection_id)
 
     // ── 9. Convert to PDF (LibreOffice) ──────────────────────────────────────
+    currentStage = 'convert_pdf'
     const baseFilename = `ASH_Inspection_${propertyRef}_${inspectionDate.replace(/\s/g, '_')}`
     const pdfBuffer = await convertDocxToPdf(docxBuffer, baseFilename)
 
     // ── 10. Send email ────────────────────────────────────────────────────────
+    currentStage = 'send_email'
     if (process.env.RESEND_API_KEY) {
       await sendReportEmail({
         to:             inspectorEmail,
@@ -614,12 +629,15 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     }
 
     console.log(`[REPORT] Report generation complete for inspection ${inspection_id}`)
-    res.json({ success: true, filename: baseFilename })
+    res.json({ ok: true, filename: baseFilename })
 
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error('[REPORT] Generation failed:', msg)
-    res.status(500).json({ error: `Report generation failed: ${msg}` })
+    console.error(`[REPORT] Generation failed at stage '${currentStage}':`, msg)
+    // PropOS-style staged error envelope. `stage` lets the client tell the user
+    // which step broke ("Couldn't build the report document" vs "Couldn't send
+    // the email") rather than showing a generic failure.
+    res.status(500).json({ ok: false, stage: currentStage, message: msg })
   }
 })
 

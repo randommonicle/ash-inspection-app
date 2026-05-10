@@ -567,6 +567,38 @@ Requires macOS + Xcode + Apple Developer account. Not in scope until Android is 
 
 ---
 
+## PropOS Engineering Conventions (already applied here)
+
+This codebase shares engineering conventions with the sibling **PropOS** project (`C:\Users\bengr\OneDrive\Desktop\PropOS`). When the inspection app folds into PropOS as an unbranded module, these conventions reduce migration friction.
+
+**Code-level rules currently followed:**
+- **Single source of truth for AI model names** — `server/config/models.ts`. PropOS uses `ANTHROPIC_RUNTIME_MODEL` env var; ASH equivalent if needed for runtime swap.
+- **`FORWARD: PROD-GATE` marker** at every PoC compromise. Grep this string across the repo for the full manifest of items to remove before going client-facing. Currently flags: `REPORT_TO_OVERRIDE` (server/services/email.ts).
+- **Inline errors, not `alert()`** — `RecordButton.tsx` uses an inline red banner for mic-permission failure rather than a focus-stealing OS alert.
+- **Stage-tagged pipeline errors** — `/api/generate-report` returns `{ok:false, stage, message}`. The app's `ReportError` class preserves the stage so the UI can say *"failed while building the report document"* not *"report failed"*. Mirror this pattern in any future multi-step route.
+- **Real services in tests, no mocks** — unit tests use real `buildReportDocx`; integration tests hit the real Anthropic API. PropOS rule: *fix the code, never skip the test*.
+- **Ownership re-checks in handlers** — every route that mutates inspection data verifies `inspection.inspector_id === req.userId` after fetching the row (defence-in-depth even with RLS).
+
+**To apply when folding into the PropOS ecosystem:**
+
+1. **Multi-tenancy via `firm_id`** — currently single-firm (ASH). Add `firm_id UUID` to `properties`, `users`, `inspections`, `observations`, `photos`, `pm_roster`, `bug_reports`, `api_usage_log`. Scope every RLS policy to `firm_id = auth_firm_id()`. Backfill ASH's existing rows with the ASH firm UUID before the migration is applied in production.
+
+2. **JWT claims pattern** — PropOS uses a `SECURITY DEFINER` custom-access-token hook that injects `user_role` and `firm_id` into the JWT. **Never overwrite the `role` claim** — PostgREST uses it to pick the Postgres role. Currently ASH reads `role` from `public.users` table on every request; switch to JWT claim to remove that round-trip.
+
+3. **Explicit `WITH CHECK` on RLS policies** — current policies use `FOR ALL USING (...)` without `WITH CHECK`. Postgres falls back to USING-as-WITH-CHECK so this is functionally correct, but PropOS rule is explicit-for-code-review. Add `WITH CHECK` to all 4 `FOR ALL` policies (`inspections_all_own`, `observations_all_own`, `photos_all_own`) and the one `FOR UPDATE` (`properties_update_admin`, `users_update_own`) in a single migration when joining.
+
+4. **Audit-log tables append-only at RLS** — when adding an inspection audit log (who generated which report, when), make it SELECT + INSERT policies only; no UPDATE or DELETE. PropOS uses CHECK constraints to enforce coherent stamps (e.g. `(authorised_at IS NULL) = (authorised_by IS NULL)`).
+
+5. **Soft-delete pattern** — currently `deleteInspection()` hard-deletes. When PropOS adopts this module, switch to `is_active=false` + `deleted_at` stamp because regulated workflows need 6-year retention (RICS Client Money Rule 4.7 analogue).
+
+6. **Unbranded mode** — the report header, email subject, and `from` address hardcode "ASH Chartered Surveyors" / `reports@propertyappdev.co.uk`. When the module ships under PropOS, route these through a per-firm config: `firms.report_header_html`, `firms.email_from_address`, `firms.report_template_id`. Add `firms.is_demo` from day one (per PropOS convention) so demo-vs-prod branching has a home.
+
+7. **Repurpose `/admin` dashboard** — currently single-firm. Either fold the live-inspections view into PropOS's existing dashboard or scope it to the current `auth_firm_id()` and namespace under `/firms/{slug}/admin`.
+
+8. **Supabase region** — confirm the ASH Supabase project is in `eu-west-2` (UK) for GDPR. PropOS pins this from day one. If ASH is elsewhere, migration is non-trivial — plan early.
+
+---
+
 ## Future Roadmap — Fire Door & Safety Inspection Mode
 
 **Background:** Richard Smith (partner, direct line manager) handles fire door inspections, Building Safety Act compliance, and HSE matters. The idea is to extend the existing app to support a second inspection type for him rather than building a separate app. Half the logic is already present.
