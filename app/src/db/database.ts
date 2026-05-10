@@ -169,6 +169,16 @@ export async function markInspectionSynced(id: string): Promise<void> {
   await getDB().run(`UPDATE inspections SET synced=1 WHERE id=?`, [id])
 }
 
+/**
+ * Mark a previously-synced inspection as dirty so the next sync pass re-uploads
+ * its observations and photos. Call this whenever a synced inspection is edited
+ * locally (e.g. observation reassignment in the pre-report checklist) — otherwise
+ * the server reads stale data from Supabase when it generates the report.
+ */
+export async function markInspectionUnsynced(id: string): Promise<void> {
+  await getDB().run(`UPDATE inspections SET synced=0 WHERE id=?`, [id])
+}
+
 export async function getInspection(id: string): Promise<LocalInspection | null> {
   const result = await getDB().query(`SELECT * FROM inspections WHERE id=?`, [id])
   const rows = result.values ?? []

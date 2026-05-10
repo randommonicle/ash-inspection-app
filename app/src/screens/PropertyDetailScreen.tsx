@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { useSync } from '../hooks/useSync'
-import { getInspectionsForProperty, createInspection, deleteInspection, markReportSent, getObservationsForInspection, getPhotosForInspection, updateObservationSection } from '../db/database'
+import { getInspectionsForProperty, createInspection, deleteInspection, markReportSent, getObservationsForInspection, getPhotosForInspection, updateObservationSection, markInspectionUnsynced } from '../db/database'
 import { generateReport } from '../services/report'
 import { PreReportChecklist } from '../components/PreReportChecklist'
 import type { Property, LocalInspection, LocalObservation, LocalPhoto, SectionKey } from '../types'
@@ -418,9 +418,15 @@ export function PropertyDetailScreen() {
             setProperty(prev => prev ? { ...prev, [flag]: false } : prev)
           }}
           onReassignObservation={async (observationId: string, newSection: SectionKey) => {
-            // Update SQLite so the change persists and syncs to Supabase next time
+            const { inspectionId } = checklist
+            // 1. Update SQLite — local state of truth
             await updateObservationSection(observationId, newSection, SECTION_TEMPLATE_ORDER[newSection])
-            // Reflect the reassignment in the checklist immediately — no navigation needed
+            // 2. Mark the inspection dirty so the next sync pass re-uploads observations.
+            //    Without this, the inspection stays synced=1 and triggerSync() ignores it,
+            //    so the server would generate the report from the stale Supabase data.
+            await markInspectionUnsynced(inspectionId)
+            setInspections(prev => prev.map(i => i.id === inspectionId ? { ...i, synced: false } : i))
+            // 3. Reflect the reassignment in the checklist immediately — no navigation needed
             setChecklist(prev => prev ? {
               ...prev,
               observations: prev.observations.map(o =>
@@ -429,6 +435,10 @@ export function PropertyDetailScreen() {
                   : o
               ),
             } : prev)
+            // 4. Kick off sync so the Supabase row is updated before "Generate Report" is tapped.
+            //    Awaited so the checklist's "Generate" button is only re-enabled once the
+            //    server has the fresh data. Failures are surfaced in the sync UI on the screen behind.
+            await triggerSync().catch(() => {})
           }}
         />
       )}

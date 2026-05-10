@@ -16,7 +16,7 @@ Built by Ben Graham. If you are picking this up for the first time, read this en
 6. [Environment Variables Reference](#6-environment-variables-reference)
 7. [Database: Supabase](#7-database-supabase)
 8. [Building and Installing the Android APK](#8-building-and-installing-the-android-apk)
-9. [Field Testing Over Mobile Data (Cloudflare Tunnel)](#9-field-testing-over-mobile-data-cloudflare-tunnel)
+9. [Release Signing and the v0.2.0 Distribution Pipeline](#9-release-signing-and-the-v020-distribution-pipeline)
 10. [Production Deployment (Railway)](#10-production-deployment-railway)
 11. [Admin Dashboard](#11-admin-dashboard)
 12. [AI Model Routing and Costs](#12-ai-model-routing-and-costs)
@@ -25,7 +25,8 @@ Built by Ben Graham. If you are picking this up for the first time, read this en
 15. [iOS Rollout Plan and Costings](#15-ios-rollout-plan-and-costings)
 16. [Pre-Production Checklist](#16-pre-production-checklist)
 17. [Key Files Reference](#17-key-files-reference)
-18. [Troubleshooting](#18-troubleshooting)
+18. [Testing](#18-testing)
+19. [Troubleshooting](#19-troubleshooting)
 
 ---
 
@@ -132,7 +133,8 @@ ash-inspection-app/
 │   │   │   ├── RecordButton.tsx
 │   │   │   ├── ObservationFeedItem.tsx
 │   │   │   ├── SectionPicker.tsx
-│   │   │   ├── PreReportChecklist.tsx
+│   │   │   ├── PreReportChecklist.tsx     (inline observation reassignment)
+│   │   │   ├── UpdatePrompt.tsx           (in-app update prompt)
 │   │   │   ├── BugReportModal.tsx
 │   │   │   └── LoadingSpinner.tsx
 │   │   ├── db/
@@ -146,7 +148,8 @@ ash-inspection-app/
 │   │   ├── hooks/
 │   │   │   ├── useAuth.ts
 │   │   │   ├── useNetwork.ts
-│   │   │   └── useSync.ts
+│   │   │   ├── useSync.ts
+│   │   │   └── useUpdateCheck.ts  (polls /api/version on launch)
 │   │   └── types/
 │   │       └── index.ts          All TypeScript types and section constants
 │   ├── android/                  Capacitor-generated Android project (do not edit by hand)
@@ -159,8 +162,12 @@ ash-inspection-app/
 │   │   ├── analysePhoto.ts       POST /api/analyse-photo
 │   │   ├── transcribe.ts         POST /api/transcribe (audio → text)
 │   │   ├── generateReport.ts     POST /api/generate-report  ← main pipeline
+│   │   ├── version.ts            GET  /api/version (public, env-var driven)
 │   │   ├── bugReport.ts          POST /api/bug-report
 │   │   └── admin.ts              GET  /admin (dashboard + sub-APIs)
+│   ├── tests/
+│   │   ├── unit.test.ts          node:test, no network — run before commit
+│   │   └── integration.test.ts   node:test + real Anthropic API — before deploy
 │   ├── services/
 │   │   ├── anthropic.ts          Anthropic SDK wrapper (classify + analyseImage)
 │   │   ├── reportGenerator.ts    Word document builder using docx-js
@@ -225,6 +232,7 @@ See [Section 6](#6-environment-variables-reference) for the full reference. The 
 ANTHROPIC_API_KEY=sk-ant-...
 SUPABASE_URL=https://xxxx.supabase.co
 SUPABASE_SERVICE_KEY=eyJ...       # service_role key from Supabase → Settings → API
+DEEPGRAM_API_KEY=...               # transcription is server-side as of May 2026
 RESEND_API_KEY=re_...
 ADMIN_PASSWORD=your-admin-password
 ```
@@ -233,8 +241,9 @@ ADMIN_PASSWORD=your-admin-password
 ```env
 VITE_SUPABASE_URL=https://xxxx.supabase.co
 VITE_SUPABASE_ANON_KEY=eyJ...     # anon key from Supabase → Settings → API
-VITE_DEEPGRAM_API_KEY=...
-VITE_API_BASE_URL=http://192.168.1.XXX:3001
+VITE_API_BASE_URL=https://ash-inspection-app-production.up.railway.app
+# VITE_DEEPGRAM_API_KEY — REMOVED. Server now holds DEEPGRAM_API_KEY and the
+# app calls POST /api/transcribe with a Bearer token. Do not re-add it here.
 ```
 
 > Find your local IP: run `ipconfig` on Windows, look for the IPv4 address of your active adapter.
@@ -279,10 +288,14 @@ Repeat after any change to frontend source files or `.env.local`.
 | `ANTHROPIC_API_KEY` | Yes | Anthropic API key. Get from console.anthropic.com → API Keys |
 | `SUPABASE_URL` | Yes | Your Supabase project URL. Supabase → Settings → API → Project URL |
 | `SUPABASE_SERVICE_KEY` | Yes | Service role key (bypasses RLS). Supabase → Settings → API → service_role |
+| `DEEPGRAM_API_KEY` | Yes | Transcription is server-side as of May 2026 — required, not optional |
 | `RESEND_API_KEY` | Yes | Resend API key for email delivery. resend.com → API Keys |
 | `ADMIN_PASSWORD` | Yes | Password for the `/admin` dashboard. Username is always `admin` |
 | `PORT` | No | Port the server listens on. Defaults to 3001. Railway sets this automatically |
-| `DEEPGRAM_API_KEY` | No | Only needed if you move transcription server-side (currently in the app) |
+| `APP_VERSION` | Prod | Latest released app version (semver). Read by `GET /api/version` to drive in-app update prompts |
+| `APK_URL` | Prod | Direct download URL for the signed APK (GitHub Releases asset URL) |
+| `RELEASE_NOTES` | Prod | Short plain-text shown in the in-app update prompt |
+| `FORCE_UPDATE` | No | `"true"` to block use until update installed. Default `false`. |
 
 > **Warning:** `SUPABASE_SERVICE_KEY` is the service role key, not the anon key. It bypasses all Row Level Security policies. Never expose it to the frontend or commit it to git.
 
@@ -292,10 +305,9 @@ Repeat after any change to frontend source files or `.env.local`.
 |----------|----------|-------------|
 | `VITE_SUPABASE_URL` | Yes | Same Supabase URL as the server |
 | `VITE_SUPABASE_ANON_KEY` | Yes | Anon (public) key. Safe to embed in the app bundle |
-| `VITE_DEEPGRAM_API_KEY` | Yes | Deepgram API key for real-time transcription in-app |
-| `VITE_API_BASE_URL` | Yes | Base URL of the Express server. Use local IP for WiFi, tunnel URL for mobile data |
+| `VITE_API_BASE_URL` | Yes | Base URL of the Express server. Railway URL in production; local IP for WiFi dev |
 
-> **Security note:** `VITE_DEEPGRAM_API_KEY` is embedded in the app bundle and therefore visible to anyone who decompiles the APK. For a production release, move transcription to a server-side `/api/transcribe` route and remove this key from the app. This is listed in the pre-production checklist.
+> **No Deepgram key on the app side.** As of May 2026 transcription is server-side. The app calls `POST /api/transcribe` with its Supabase Bearer token; the server proxies to Deepgram. If you re-introduce `VITE_DEEPGRAM_API_KEY` you'll leak it into the APK bundle — don't.
 
 ---
 
@@ -377,39 +389,67 @@ To install directly to a connected device:
 ./gradlew installDebug
 ```
 
-### Distributing to PMs
+### Distributing to PMs (first install per device)
 
-Share the APK file via email, WhatsApp, or Google Drive. The PM taps the file on their Android phone and follows the "Install from unknown sources" prompt. This is a one-time setting.
+Share the APK via email, WhatsApp, or Google Drive. The PM taps the file on their Android phone and follows the "Install from unknown sources" prompt. This is a one-time per-source setting.
 
-**After any code change**, repeat the build sequence (steps 1–3). The version on device does not auto-update — you need to share the new APK each time.
+**After this first install, the in-app update prompt takes over** — see Section 9. PMs do not need to be sent every new build.
 
-### Release APK (signed, for Google Play)
+### Release APK (signed)
 
-Not yet set up. See [Section 15 — iOS Rollout Plan](#15-ios-rollout-plan-and-costings) which also covers the Google Play release process.
+Signing is fully configured — see [Section 9](#9-release-signing-and-the-v020-distribution-pipeline). Run `./gradlew assembleRelease` (instead of `assembleDebug`) and the output goes to:
+
+```
+app/android/app/build/outputs/apk/release/app-release.apk
+```
+
+Requires `app/android/ash-inspection.jks` and `app/android/local.properties` with the three credential lines (both git-ignored, Dropbox-backed).
 
 ---
 
-## 9. Field Testing Over Mobile Data (Cloudflare Tunnel)
+## 9. Release Signing and the v0.2.0 Distribution Pipeline
 
-When testing on a device that is not on the same WiFi network as the development server, use Cloudflare Tunnel to expose the local server over HTTPS:
+The app uses a GitHub Releases + Railway-env-var pipeline for over-the-air update notifications. No Google Play account required.
 
-```bash
-# Terminal 1 — start the server
-cd server && npm run dev
+### Keystore (one-time setup, already done)
 
-# Terminal 2 — open a public HTTPS tunnel to the local server
-cloudflared tunnel --url http://localhost:3001
-# Output: https://some-random-name.trycloudflare.com
-```
+- File: `app/android/ash-inspection.jks` (RSA 2048-bit, alias `ash-inspection`, 10000-day validity)
+- Credentials in git-ignored `app/android/local.properties`:
+  ```
+  KEYSTORE_PASSWORD=...
+  KEY_ALIAS=ash-inspection
+  KEY_PASSWORD=...
+  ```
+- `app/android/app/build.gradle` reads these via `rootProject.file('local.properties')` and applies the signing config to release builds.
+- **New machine:** copy the `.jks` and the three credential lines from Dropbox into the matching paths. Without them, `assembleRelease` produces an `app-release-unsigned.apk` instead of `app-release.apk`.
 
-Update `app/.env.local`:
-```env
-VITE_API_BASE_URL=https://some-random-name.trycloudflare.com
-```
+### Cutting a release
 
-Then rebuild and reinstall the app.
+1. Bump `app/package.json` `version` and `app/android/app/build.gradle` `versionCode` (+1) and `versionName` (matching `package.json`).
+2. From `app/`:
+   ```
+   npm run build
+   npx cap sync android
+   ```
+3. From `app/android/`:
+   ```
+   set JAVA_HOME=C:\Program Files\Android\Android Studio\jbr
+   .\gradlew assembleRelease
+   ```
+4. Upload `app/android/app/build/outputs/apk/release/app-release.apk` to a new GitHub Release tagged `vX.Y.Z`. Copy the asset download URL.
+5. In Railway → Variables:
+   - `APP_VERSION` → `X.Y.Z`
+   - `APK_URL` → the GitHub asset URL
+   - `RELEASE_NOTES` → short plain text
+6. Railway auto-redeploys (it only needs to pick up the new env vars). The next time any installed app launches, `GET /api/version` reports the new build and the user is prompted to download.
 
-> **Note:** The tunnel URL changes every time `cloudflared` restarts. If the tunnel drops, re-run the command and update the URL. For permanent field testing, deploy the server to Railway (Section 10) instead.
+### Current baseline
+
+- **v0.2.0:** `https://github.com/randommonicle/ash-inspection-app/releases/download/v0.2.0/app-release.apk`
+
+### Field testing over mobile data
+
+Railway is live and HTTPS — point `VITE_API_BASE_URL` at the Railway URL and you can test on any cellular network without tunnelling. The previous Cloudflare Tunnel workflow is obsolete.
 
 ---
 
@@ -747,13 +787,14 @@ Month 3+ If ASH formally adopt the app → consider Mac Mini purchase
 
 Before this app is used in production with real inspections:
 
-- [ ] **Move Deepgram key to server-side** — `VITE_DEEPGRAM_API_KEY` is currently in the app bundle. Move transcription to `POST /api/transcribe` and remove the key from the frontend. A stub route exists at `server/routes/transcribe.ts`.
-- [ ] **Replace CORS wildcard** — `server/index.ts` currently allows specific known origins. Confirm the final Railway URL is in `ALLOWED_ORIGINS`.
-- [ ] **Verify Resend domain** — `ashproperty.co.uk` must be verified in Resend (DNS records added) and the `from` address in `server/services/email.ts` updated to a real `@ashproperty.co.uk` address.
+- [x] **Move Deepgram key to server-side** *(May 2026)* — Transcription now goes through `POST /api/transcribe`. The app holds no Deepgram key.
+- [x] **Replace CORS wildcard** *(May 2026)* — `ALLOWED_ORIGINS` in `server/index.ts` is a fixed allowlist (Railway URL + Capacitor schemes).
+- [x] **Set up release signing** *(May 2026)* — Keystore + Gradle signing config done. See [Section 9](#9-release-signing-and-the-v020-distribution-pipeline).
+- [ ] **Verify Resend domain** — `propertyappdev.co.uk` is currently the sending domain. If switching to `ashproperty.co.uk` later, verify it in Resend and update the `from` address in `server/services/email.ts`.
 - [ ] **Wipe test data** — Before go-live, truncate `inspections`, `observations`, `photos`, `api_usage_log`, and clear the `inspection-files` storage bucket. Leave `users` and `properties` intact.
-- [ ] **Set ADMIN_PASSWORD** in Railway variables (if not done).
+- [ ] **Remove `REPORT_TO_OVERRIDE`** from Railway Variables so reports route to each inspector's own address.
 - [ ] **Enable Supabase Auth email confirmation** — currently off to allow instant registration during development. Turn on for production so new accounts require email verification.
-- [ ] **Google Play Store listing** — Create a developer account ($25 one-off), upload a signed release APK, fill in store listing, submit for review.
+- [ ] **Google Play Store listing** *(deferred)* — Optional. The in-app update prompt covers OTA updates without Play Store. Only needed if ASH formally adopt the app for broader distribution.
 
 ---
 
@@ -780,7 +821,41 @@ Before this app is used in production with real inspections:
 
 ---
 
-## 18. Troubleshooting
+## 18. Testing
+
+Two test suites live in `server/tests/`. Both use `node:test` (built into Node 20+) with `tsx` as the TypeScript loader — no mocks anywhere.
+
+### Unit tests (run before every commit)
+
+```
+cd server
+npm run test:unit
+```
+
+- ~340 ms, zero network calls
+- 11 tests across SECTION_LABELS / SECTION_ORDER integrity and `buildReportDocx` smoke
+- Includes explicit regression tests for the `meter_reads` bug (section present in one constant but missing from another caused blank headings in the Word report)
+- If a test fails, **fix the source** — never skip the test
+
+### Integration tests (run before deploying server changes)
+
+```
+cd server
+npm run test:integration
+```
+
+- Hits the real Anthropic API — costs ~$0.0002/run
+- 6 tests asserting that specific narrations route to the correct sections (e.g. meter readings → `meter_reads`, lift descriptions → `lifts`, external approach → `external_approach`)
+- Requires `ANTHROPIC_API_KEY` in `server/.env` (the script auto-loads it via `--env-file=.env`)
+
+### What's intentionally not tested
+
+- App-side React components — Capacitor + SQLite makes meaningful integration tests expensive; field testing with Pete catches UI regressions faster
+- DOCX byte-level content — fragile and produces noisy failures on every harmless rewording
+
+---
+
+## 19. Troubleshooting
 
 **Server won't start / `ANTHROPIC_API_KEY is not set`**
 → Check `server/.env` exists and contains the key. The file is gitignored and must be created manually.

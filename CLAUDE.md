@@ -59,14 +59,23 @@ Reports match the existing ASH template exactly. The AI cleans up voice narratio
 ```
 ANTHROPIC_API_KEY=...
 SUPABASE_URL=...
-SUPABASE_SERVICE_ROLE_KEY=...    # Service role — bypasses RLS, server-side only
-DEEPGRAM_API_KEY=...
+SUPABASE_SERVICE_KEY=...         # Service role — bypasses RLS, server-side only
+                                 # (SUPABASE_SERVICE_ROLE_KEY is accepted as an alias in .env.example)
+DEEPGRAM_API_KEY=...              # Required — transcription is server-side
 RESEND_API_KEY=...
-REPORT_TO_OVERRIDE=...           # REMOVE IN PRODUCTION — forces all emails to one address
+ADMIN_PASSWORD=...                # /admin dashboard login (username always "admin")
+REPORT_TO_OVERRIDE=...            # REMOVE IN PRODUCTION — forces all emails to one address
 ```
 
 ### Railway Variables (production — set in Railway dashboard)
-Same keys as above, minus `REPORT_TO_OVERRIDE` once that's removed.
+Same keys as above, minus `REPORT_TO_OVERRIDE` once that's removed, plus the update-checker vars:
+```
+APP_VERSION=0.2.0                 # Latest released app version (semver)
+APK_URL=https://github.com/randommonicle/ash-inspection-app/releases/download/v0.2.0/app-release.apk
+RELEASE_NOTES=...                 # Short plain-text shown in the in-app update prompt
+FORCE_UPDATE=false                # Set "true" to block use until update installed
+```
+These are read by `GET /api/version` — bumping them does NOT require a code redeploy.
 
 ### `app/.env.local` (never committed)
 ```
@@ -137,12 +146,15 @@ ash-inspection-app/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── RecordButton.tsx       # Tap-to-start/stop recorder with cancel + camera slots
-│   │   │   ├── ObservationFeedItem.tsx # Single observation card in the feed
+│   │   │   ├── ObservationFeedItem.tsx # Single observation card in the feed (with "Change section" button)
 │   │   │   ├── SectionPicker.tsx      # Modal for manually overriding a section
-│   │   │   └── PreReportChecklist.tsx # Pre-generation checklist modal (Phase 6)
+│   │   │   ├── PreReportChecklist.tsx # Pre-generation checklist modal (Phase 6, with inline reassignment)
+│   │   │   ├── UpdatePrompt.tsx       # Bottom-sheet shown when /api/version reports a newer build
+│   │   │   ├── BugReportModal.tsx     # In-app bug report submission
+│   │   │   └── LoadingSpinner.tsx
 │   │   ├── screens/
-│   │   │   ├── ActiveInspectionScreen.tsx  # Main recording interface
-│   │   │   ├── PropertyDetailScreen.tsx    # Property info + inspection history + report trigger
+│   │   │   ├── ActiveInspectionScreen.tsx  # Main recording interface (non-blocking transcription queue)
+│   │   │   ├── PropertyDetailScreen.tsx    # Property info + inspection history + report trigger + 3-state sync UI
 │   │   │   └── PropertyListScreen.tsx      # Property list from Supabase
 │   │   ├── services/
 │   │   │   ├── sync.ts               # Background sync queue (SQLite → Supabase + photo upload)
@@ -154,7 +166,8 @@ ash-inspection-app/
 │   │   │   └── database.ts           # All SQLite operations (inspections, observations, photos)
 │   │   ├── hooks/
 │   │   │   ├── useSync.ts            # Exposes sync status and triggerSync()
-│   │   │   └── useNetwork.ts         # Online/offline detection
+│   │   │   ├── useNetwork.ts         # Online/offline detection
+│   │   │   └── useUpdateCheck.ts     # Polls /api/version on launch; returns updateInfo for UpdatePrompt
 │   │   ├── contexts/
 │   │   │   └── AuthContext.tsx       # Supabase auth, profile loading, sign-out on cold start
 │   │   └── types/
@@ -169,7 +182,14 @@ ash-inspection-app/
 │   ├── routes/
 │   │   ├── classify.ts               # POST /api/classify — AI section classification
 │   │   ├── analysePhoto.ts           # POST /api/analyse-photo — Opus image analysis
-│   │   └── generateReport.ts         # POST /api/generate-report — full pipeline
+│   │   ├── transcribe.ts             # POST /api/transcribe — server-side Deepgram (raw audio body)
+│   │   ├── generateReport.ts         # POST /api/generate-report — full pipeline
+│   │   ├── version.ts                # GET  /api/version — public, env-var driven, update checker
+│   │   ├── bugReport.ts              # POST /api/bug-report
+│   │   └── admin.ts                  # GET  /admin dashboard + sub-APIs
+│   ├── tests/
+│   │   ├── unit.test.ts              # node:test, no network, ~340ms — run before commit
+│   │   └── integration.test.ts       # node:test with real Anthropic API — run before deploy
 │   ├── services/
 │   │   ├── reportGenerator.ts        # Builds the Word document (docx library)
 │   │   ├── email.ts                  # Sends report via Resend
@@ -310,6 +330,58 @@ After recording, the indicator reverts to normal. Inspector uses the back button
 - **In Word**: Ctrl+Click to follow internal hyperlinks (Word requires Ctrl — this is normal behaviour)
 - **In PDF**: single-click works as expected
 
+### Non-blocking transcription
+`app/src/screens/ActiveInspectionScreen.tsx`  
+Each recording gets a unique key pushed onto `processingItems: string[]` when transcription starts and filtered off in `finally`. The Record button is only disabled while *actively recording*, not while transcribing — so PMs can fire a second clip while the first is still being processed by Deepgram + Sonnet. The feed shows one spinner card per in-flight item. The "Complete inspection" button is disabled while the queue is non-empty.
+
+### Checklist reassignment
+`app/src/components/PreReportChecklist.tsx` → `onReassignObservation` prop  
+When a section has no observations, the row shows a **Move** button alongside Edit and N/A. Tapping Move expands an inline picker listing every observation from other sections; tapping one reassigns it. Used both during an active inspection (from the per-observation "Change section" button) and from the pre-report checklist on PropertyDetailScreen.
+
+**Important sync behaviour for synced inspections:**  
+When the reassignment is triggered from the pre-report checklist (where the inspection is by definition already synced), `PropertyDetailScreen` must mark the inspection dirty (`markInspectionUnsynced`) and await `triggerSync()` before the user proceeds to Generate Report. Otherwise the server reads stale observation rows from Supabase. See `onReassignObservation` callback in `PropertyDetailScreen.tsx`.
+
+### Sync progress indicator
+`PropertyDetailScreen.tsx` shows a three-state row for inspections that are `status='completed'` but `synced=false`:
+- **Syncing** — spinner + "Uploading observations & photos…"
+- **Error** — red badge + Retry button (calls `triggerSync()`)
+- **Offline** — neutral note if the network hook reports offline
+A `syncTriggeredRef` fires sync once on screen mount; subsequent reassignments trigger their own sync passes.
+
+### In-app update checker
+`app/src/hooks/useUpdateCheck.ts` + `app/src/components/UpdatePrompt.tsx` + `server/routes/version.ts`  
+- App fetches `GET /api/version` on launch (after login) with an 8s timeout
+- Compares `remote.version` against build-time `__APP_VERSION__` (injected by Vite from `package.json`) using a numeric semver compare
+- If remote is newer, shows a bottom-sheet `UpdatePrompt`. Tapping Download calls `window.open(apkUrl, '_blank')` — opens a Chrome Custom Tab, Android download manager intercepts the APK, user accepts install
+- Failures are silently swallowed — version check must never block app usage
+- `forceUpdate=true` removes the dismiss button; use only for breaking schema changes
+- `/api/version` is public (mounted before all auth routes) — env-var driven so updates ship without code redeploy
+
+### Release signing (Android)
+`app/android/app/build.gradle`  
+- Keystore: `app/android/ash-inspection.jks` — RSA 2048-bit, alias `ash-inspection`, 10000-day validity
+- Credentials live in git-ignored `app/android/local.properties` (also Dropbox-backed)
+- `build.gradle` reads `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD` via `rootProject.file('local.properties')`
+- `versionCode` increments by 1 per release; `versionName` mirrors `app/package.json` "version" — bump both together
+- **New machine setup:** copy `ash-inspection.jks` into `app/android/` and add the three credential lines to `local.properties`. Without these, `./gradlew assembleRelease` produces `app-release-unsigned.apk` instead of `app-release.apk`.
+
+### Release process
+1. Bump `app/package.json` "version" + `versionCode`/`versionName` in `app/android/app/build.gradle`
+2. `cd app && npm run build && npx cap sync android`
+3. `cd app/android && ./gradlew assembleRelease` (set `JAVA_HOME` first on Windows if not done)
+4. Upload `app/android/app/build/outputs/apk/release/app-release.apk` to GitHub Releases as tag `vX.Y.Z`
+5. In Railway → Variables: update `APP_VERSION`, `APK_URL`, `RELEASE_NOTES`
+6. Railway auto-redeploys; apps see the new version on next launch
+7. For the first push on each device, the APK must still be sent manually — the in-app prompt takes over from there
+
+Current baseline: **v0.2.0** at `https://github.com/randommonicle/ash-inspection-app/releases/download/v0.2.0/app-release.apk`
+
+### Testing infrastructure
+`server/tests/`  
+- **`unit.test.ts`** — `node:test`, zero network, ~340ms. 11 tests covering SECTION_LABELS/SECTION_ORDER integrity (regression cases for the meter_reads bug) and `buildReportDocx` smoke. Run with `npm run test:unit` before every commit.
+- **`integration.test.ts`** — `node:test` + real Anthropic API. ~$0.0002/run. 6 tests asserting classification routes specific narrations to the right sections (e.g. meter readings → `meter_reads`, lift narratives → `lifts`). Run with `npm run test:integration` before deploy.
+- Both use the project's existing `tsx` install via `--require ./node_modules/tsx/dist/cjs/index.cjs`. No mocks anywhere — *fix the code, never skip the test*.
+
 ---
 
 ## Build Phases
@@ -322,7 +394,7 @@ After recording, the indicator reverts to normal. Inspector uses the back button
 | 4 | ✅ | Background sync queue, Supabase Storage photo upload, Opus image analysis |
 | 5 | ✅ | Observation processing, AI summary, Word report (ASH template), Resend email |
 | 5.5 | ✅ | First field test (1 May 2026), recurring items, PDF via LibreOffice, dual email, property autocorrect, photo appendix with bookmarks |
-| 6 | 🔄 | Pre-report checklist ✅, weather auto-fill ✅, projected next inspection ✅, tap-to-fullscreen viewer ⬜, duplicate image grouping ⬜ |
+| 6 | 🔄 | Pre-report checklist ✅, weather auto-fill ✅, projected next inspection ✅, photo-only/photo-first synthesis ✅, non-blocking transcription ✅, checklist reassignment ✅, sync progress indicator ✅, in-app update checker ✅ (v0.2.0 released), unit + integration test suites ✅, release signing ✅, tap-to-fullscreen viewer ⬜, duplicate image grouping ⬜ |
 
 ---
 
@@ -368,14 +440,11 @@ Search for `// TODO [PRODUCTION]:` in the codebase to find all flagged items.
 - [x] **Deepgram key in frontend bundle** — `server/routes/transcribe.ts` (May 2026)  
   Moved to `POST /api/transcribe`. Server holds `DEEPGRAM_API_KEY`. App calls its own backend with a Supabase Bearer token. `VITE_DEEPGRAM_API_KEY` removed from `app/.env.local`. Key is no longer in the APK bundle.
 
-- [ ] **CORS wildcard** — `server/index.ts`  
-  Replace `cors()` with `cors({ origin: ['https://app.ashproperty.co.uk'] })` before exposing the server to the public internet.
+- [x] **CORS whitelist** — `server/index.ts` (May 2026)  
+  No longer a wildcard. `ALLOWED_ORIGINS` allows the Railway URL plus Capacitor's `https://localhost` and `capacitor://localhost` schemes only.
 
-- [ ] **`allowNavigation` IP whitelist** — `app/capacitor.config.ts`  
-  Still contains `192.168.1.108` (home dev IP). For production, replace with the Railway domain. Currently harmless — the IP is only used in local dev when `VITE_API_BASE_URL` points to it.
-
-- [ ] **`allowMixedContent`** — `app/capacitor.config.ts`  
-  Set to `true` to allow the HTTPS app shell to call HTTP local endpoints during development. Safe to leave as-is since Railway is HTTPS, but should be removed when local dev is no longer needed.
+- [x] **`allowNavigation` / `allowMixedContent`** — `app/capacitor.config.ts` (May 2026)  
+  Removed. Capacitor config is now minimal: `appId`, `appName`, `webDir`, `androidScheme: 'https'`. Both legacy IP whitelist and HTTP fallback are gone.
 
 - [ ] **Report header email** — `server/services/reportGenerator.ts`  
   Currently shows `ben@ashproperty.co.uk`. Replace with the firm's general enquiries address before client-facing use.
