@@ -76,6 +76,7 @@ export function PropertyListScreen() {
                 Sign out
               </button>
             </div>
+            <p className="text-ash-light/60 text-[10px] mt-1 font-mono">v{__APP_VERSION__}</p>
           </div>
         </div>
 
