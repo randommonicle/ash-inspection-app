@@ -8,6 +8,7 @@ import { RegisterScreen } from './screens/RegisterScreen'
 import { PropertyListScreen } from './screens/PropertyListScreen'
 import { PropertyDetailScreen } from './screens/PropertyDetailScreen'
 import { ActiveInspectionScreen } from './screens/ActiveInspectionScreen'
+import { MyReportsScreen } from './screens/MyReportsScreen'
 import { UpdatePrompt } from './components/UpdatePrompt'
 import { useUpdateCheck } from './hooks/useUpdateCheck'
 import { initDatabase } from './db/database'
@@ -70,6 +71,10 @@ function AppRoutes() {
         <Route
           path="/inspection/:inspectionId"
           element={session ? <ActiveInspectionScreen /> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/my-reports"
+          element={session ? <MyReportsScreen /> : <Navigate to="/login" replace />}
         />
         <Route
           path="*"

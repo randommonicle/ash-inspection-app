@@ -48,6 +48,7 @@ router.get('/api/stats', async (_req, res) => {
     { count: activeInspections },
     { count: completedThisMonth },
     { count: totalBugReports },
+    { count: openBugReports },
     { count: reportsGenerated },
   ] = await Promise.all([
     supabase.from('properties').select('*', { count: 'exact', head: true }),
@@ -57,6 +58,7 @@ router.get('/api/stats', async (_req, res) => {
       .eq('status', 'completed')
       .gte('end_time', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()),
     supabase.from('bug_reports').select('*', { count: 'exact', head: true }),
+    supabase.from('bug_reports').select('*', { count: 'exact', head: true }).in('status', ['open', 'in_progress']),
     supabase.from('inspections').select('*', { count: 'exact', head: true }).eq('status', 'report_generated'),
   ])
 
@@ -67,6 +69,7 @@ router.get('/api/stats', async (_req, res) => {
     completedThisMonth: completedThisMonth ?? 0,
     reportsGenerated: reportsGenerated ?? 0,
     totalBugReports: totalBugReports ?? 0,
+    openBugReports: openBugReports ?? 0,
   })
 })
 
@@ -133,12 +136,55 @@ router.get('/api/pms', async (_req, res) => {
 router.get('/api/bugs', async (_req, res) => {
   const { data, error } = await supabase
     .from('bug_reports')
-    .select('id, type, description, reporter_name, created_at')
+    .select('id, type, description, reporter_name, created_at, updated_at, status, resolution_notes, resolved_version, duplicate_of')
     .order('created_at', { ascending: false })
-    .limit(50)
+    .limit(100)
 
   if (error) return res.status(500).json({ error: error.message })
   res.json(data ?? [])
+})
+
+// Admin-side update for status / resolution / duplicate-merging. App users
+// can read their own reports but cannot mutate — the lifecycle is driven from
+// here only.
+router.patch('/api/bugs/:id', async (req, res) => {
+  const { id } = req.params
+  const { status, resolution_notes, resolved_version, duplicate_of } = req.body ?? {}
+
+  const allowed = ['open', 'in_progress', 'fixed', 'wont_fix', 'duplicate']
+  if (status !== undefined && !allowed.includes(status)) {
+    return res.status(400).json({ error: `status must be one of ${allowed.join(', ')}` })
+  }
+
+  // Build patch — only include fields the caller sent, so partial updates work
+  const patch: Record<string, unknown> = {}
+  if (status !== undefined)           patch.status           = status
+  if (resolution_notes !== undefined) patch.resolution_notes = resolution_notes || null
+  if (resolved_version !== undefined) patch.resolved_version = resolved_version || null
+  if (duplicate_of !== undefined)     patch.duplicate_of     = duplicate_of     || null
+
+  // Clear duplicate_of automatically when leaving the duplicate state — keeps
+  // the link from going stale on a row whose status drifted to "fixed" later.
+  if (status && status !== 'duplicate' && duplicate_of === undefined) {
+    patch.duplicate_of = null
+  }
+
+  if (Object.keys(patch).length === 0) {
+    return res.status(400).json({ error: 'No fields to update' })
+  }
+
+  const { data, error } = await supabase
+    .from('bug_reports')
+    .update(patch)
+    .eq('id', id)
+    .select('id, status, resolution_notes, resolved_version, duplicate_of, updated_at')
+    .single()
+
+  if (error) {
+    console.error('[ADMIN] Bug PATCH failed:', error.message)
+    return res.status(500).json({ error: error.message })
+  }
+  res.json(data)
 })
 
 router.get('/api/properties', async (_req, res) => {
@@ -274,6 +320,22 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     .badge-report  { background:#7c3aed22; color:#c084fc; border:1px solid #c084fc44; }
     .badge-bug     { background:#dc262622; color:#f87171; border:1px solid #f8717144; }
     .badge-suggest { background:#d9770622; color:#fb923c; border:1px solid #fb923c44; }
+    .badge-status-open        { background:#dc262622; color:#f87171; border:1px solid #f8717144; }
+    .badge-status-in_progress { background:#ca8a0422; color:#fbbf24; border:1px solid #fbbf2444; }
+    .badge-status-fixed       { background:#16a34a22; color:#4ade80; border:1px solid #4ade8044; }
+    .badge-status-wont_fix    { background:#47556922; color:#94a3b8; border:1px solid #94a3b844; }
+    .badge-status-duplicate   { background:#7c3aed22; color:#c084fc; border:1px solid #c084fc44; }
+    .bug-row.collapsed .bug-edit { display:none; }
+    .bug-edit { background:#0f1b2d; border-top:1px dashed #2d4060; padding:.75rem 1rem; }
+    .bug-edit label { display:block; font-size:.7rem; color:#94a3b8; text-transform:uppercase; letter-spacing:.05em; margin-bottom:.25rem; margin-top:.5rem; }
+    .bug-edit select, .bug-edit input, .bug-edit textarea {
+      background:#1e2d42; border:1px solid #2d4060; color:#e2e8f0; padding:.4rem .6rem;
+      border-radius:.375rem; font-size:.8rem; width:100%; font-family: inherit;
+    }
+    .bug-edit textarea { resize:vertical; min-height:60px; }
+    .bug-edit .btn { background:#2563eb; color:white; border:none; padding:.4rem .8rem; border-radius:.375rem; font-size:.75rem; cursor:pointer; margin-top:.5rem; }
+    .bug-edit .btn:disabled { background:#475569; cursor:not-allowed; }
+    .bug-edit .btn:hover:not(:disabled) { background:#3b82f6; }
     .spin { animation: spin 1s linear infinite; }
     @keyframes spin { to { transform:rotate(360deg); } }
     table { border-collapse: collapse; width: 100%; }
@@ -341,7 +403,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       </div>
       <div class="card rounded-xl p-4">
         <div class="text-2xl font-bold text-orange-400" id="stat-bugs">—</div>
-        <div class="text-xs text-slate-400 mt-1">Bug Reports</div>
+        <div class="text-xs text-slate-400 mt-1">
+          Bug Reports
+          <span id="stat-bugs-open" class="ml-1 text-red-400"></span>
+        </div>
       </div>
     </div>
 
@@ -480,6 +545,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       document.getElementById('stat-month').textContent      = s.completedThisMonth
       document.getElementById('stat-reports').textContent    = s.reportsGenerated
       document.getElementById('stat-bugs').textContent       = s.totalBugReports
+      const openEl = document.getElementById('stat-bugs-open')
+      openEl.textContent = s.openBugReports > 0 ? '(' + s.openBugReports + ' open)' : ''
     } catch(e) { console.error('stats', e) }
   }
 
@@ -648,25 +715,124 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
   }
 
+  // Track which bug rows have their editor expanded
+  const bugsExpanded = new Set()
+  let bugsData = []
+
+  const STATUS_LABELS = {
+    open:        'Open',
+    in_progress: 'In progress',
+    fixed:       'Fixed',
+    wont_fix:    "Won't fix",
+    duplicate:   'Duplicate',
+  }
+
+  function escapeHtml(s) {
+    if (s === null || s === undefined) return ''
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+  }
+
   async function loadBugs() {
     try {
       const data = await api('/api/bugs')
-      const el = document.getElementById('bugs-body')
-      if (!data.length) { el.innerHTML = empty('No bug reports yet'); return }
-      el.innerHTML = '<table><thead><tr><th>Type</th><th>From</th><th>Description</th><th>Submitted</th></tr></thead><tbody>' +
-        data.map(r => {
-          const badge = r.type === 'bug'
-            ? '<span class="badge-bug text-xs px-2 py-0.5 rounded-full">Bug</span>'
-            : '<span class="badge-suggest text-xs px-2 py-0.5 rounded-full">Suggestion</span>'
-          return \`<tr>
-            <td>\${badge}</td>
-            <td class="text-slate-300">\${r.reporter_name}</td>
-            <td class="text-slate-400 max-w-md" style="white-space:pre-wrap">\${r.description}</td>
-            <td class="text-slate-500 text-xs whitespace-nowrap">\${fmt(r.created_at)}</td>
-          </tr>\`
-        }).join('') + '</tbody></table>'
+      bugsData = data
+      renderBugs()
     } catch(e) { document.getElementById('bugs-body').innerHTML = empty('Failed to load') }
   }
+
+  function renderBugs() {
+    const el = document.getElementById('bugs-body')
+    if (!bugsData.length) { el.innerHTML = empty('No bug reports yet'); return }
+    el.innerHTML = '<table><thead><tr><th>Type</th><th>From</th><th>Description</th><th>Status</th><th>Submitted</th><th></th></tr></thead><tbody>' +
+      bugsData.map((r, idx) => {
+        const typeBadge = r.type === 'bug'
+          ? '<span class="badge-bug text-xs px-2 py-0.5 rounded-full">Bug</span>'
+          : '<span class="badge-suggest text-xs px-2 py-0.5 rounded-full">Suggestion</span>'
+        const status = r.status || 'open'
+        const statusBadge = '<span class="badge-status-' + status + ' text-xs px-2 py-0.5 rounded-full">' + STATUS_LABELS[status] + '</span>'
+        const resolution = r.resolution_notes
+          ? '<div class="mt-1 text-xs text-slate-300 italic">↳ ' + escapeHtml(r.resolution_notes) + (r.resolved_version ? ' <span class="text-green-400">(v' + escapeHtml(r.resolved_version) + ')</span>' : '') + '</div>'
+          : ''
+        const dupLink = r.duplicate_of
+          ? '<div class="mt-1 text-xs text-purple-300">↳ duplicate of <span class="font-mono">' + escapeHtml(r.duplicate_of.slice(0,8)) + '…</span></div>'
+          : ''
+        const expanded = bugsExpanded.has(r.id)
+        const rowClass = expanded ? 'bug-row' : 'bug-row collapsed'
+        const editor = buildBugEditor(r)
+        return '<tr class="' + rowClass + '" data-bug-id="' + r.id + '">' +
+          '<td>' + typeBadge + '</td>' +
+          '<td class="text-slate-300">' + escapeHtml(r.reporter_name) + '</td>' +
+          '<td class="text-slate-400 max-w-md" style="white-space:pre-wrap">' + escapeHtml(r.description) + resolution + dupLink + '</td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td class="text-slate-500 text-xs whitespace-nowrap">' + fmt(r.created_at) + '</td>' +
+          '<td><button onclick="toggleBugEditor(\\'' + r.id + '\\')" class="text-xs text-blue-400 hover:text-blue-300 underline">' + (expanded ? 'Close' : 'Edit') + '</button></td>' +
+          '</tr>' +
+          (expanded ? '<tr><td colspan="6" class="bug-edit p-0">' + editor + '</td></tr>' : '')
+      }).join('') + '</tbody></table>'
+  }
+
+  function buildBugEditor(r) {
+    const status = r.status || 'open'
+    const options = Object.entries(STATUS_LABELS).map(([k, v]) =>
+      '<option value="' + k + '"' + (k === status ? ' selected' : '') + '>' + v + '</option>'
+    ).join('')
+    const otherBugs = bugsData
+      .filter(b => b.id !== r.id)
+      .slice(0, 30)
+      .map(b => '<option value="' + b.id + '"' + (b.id === r.duplicate_of ? ' selected' : '') + '>' + escapeHtml(b.reporter_name) + ' — ' + escapeHtml(b.description.slice(0, 60)) + '</option>')
+      .join('')
+
+    return '<div class="bug-edit">' +
+      '<label>Status</label>' +
+      '<select id="bug-status-' + r.id + '">' + options + '</select>' +
+      '<label>Resolution notes (shown to the reporter)</label>' +
+      '<textarea id="bug-notes-' + r.id + '" placeholder="e.g. Fixed by enforcing aspect ratio when rendering photos.">' + escapeHtml(r.resolution_notes ?? '') + '</textarea>' +
+      '<label>Resolved in version (semver, e.g. 0.2.2) — only when status is Fixed</label>' +
+      '<input id="bug-version-' + r.id + '" type="text" value="' + escapeHtml(r.resolved_version ?? '') + '" placeholder="0.2.2" />' +
+      '<label>Duplicate of (only when status is Duplicate)</label>' +
+      '<select id="bug-dup-' + r.id + '"><option value="">— none —</option>' + otherBugs + '</select>' +
+      '<button class="btn" onclick="saveBug(\\'' + r.id + '\\')">Save</button>' +
+      ' <button class="btn" style="background:#475569" onclick="toggleBugEditor(\\'' + r.id + '\\')">Cancel</button>' +
+      '</div>'
+  }
+
+  function toggleBugEditor(id) {
+    if (bugsExpanded.has(id)) bugsExpanded.delete(id)
+    else bugsExpanded.add(id)
+    renderBugs()
+  }
+
+  async function saveBug(id) {
+    const status   = document.getElementById('bug-status-' + id).value
+    const notes    = document.getElementById('bug-notes-' + id).value.trim()
+    const version  = document.getElementById('bug-version-' + id).value.trim()
+    const dup      = document.getElementById('bug-dup-' + id).value || null
+
+    try {
+      const r = await fetch('/admin/api/bugs/' + id, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          status,
+          resolution_notes: notes,
+          resolved_version: version,
+          duplicate_of:     status === 'duplicate' ? dup : null,
+        }),
+      })
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}))
+        alert('Save failed: ' + (err.error ?? r.statusText))
+        return
+      }
+      bugsExpanded.delete(id)
+      await Promise.all([loadStats(), loadBugs()])
+    } catch (e) {
+      alert('Save failed: ' + e.message)
+    }
+  }
+  // Expose handlers used by inline onclick attributes
+  window.toggleBugEditor = toggleBugEditor
+  window.saveBug         = saveBug
 
   let activeTab = 'active'
   function switchTab(tab) {

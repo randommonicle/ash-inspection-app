@@ -324,7 +324,7 @@ Repeat after any change to frontend source files or `.env.local`.
 | `inspections` | One row per inspection run. Status: active → completed → report_generated |
 | `observations` | Voice observations — raw narration, processed text, action, risk level, section |
 | `photos` | Photo metadata + Opus analysis JSON (`opus_description` JSONB column) |
-| `bug_reports` | In-app bug reports submitted by PMs |
+| `bug_reports` | In-app bug reports submitted by PMs — status / resolution / dedup tracking |
 | `api_usage_log` | Per-call cost tracking for Anthropic and Deepgram (see Admin Dashboard) |
 
 ### Storage bucket
@@ -510,7 +510,7 @@ The dashboard is a self-contained HTML page served directly by the server with n
 | **Recent Inspections** | Last 20 completed or report-generated inspections |
 | **Inspectors** | All registered PM accounts with email and join date |
 | **Properties** | All 70 properties with ref, address, and assigned PM |
-| **Bug Reports** | All submitted bug reports and feature suggestions |
+| **Bug Reports** | All submitted bug reports and feature suggestions — change status (open / in_progress / fixed / wont_fix / duplicate), add a resolution note and version, or mark as a duplicate of another report. Inspectors see the resolution in their in-app "My Reports" view. |
 | **Costs & Usage** | Per-call API cost log. CSV export button for financial reporting |
 
 ### Cost tracking
@@ -913,6 +913,9 @@ Cost: roughly $0.05 per photo (one Opus call each). Time: ~3–5 seconds per pho
 
 **Photos in the report have no auto-caption**
 → The photo was rejected at sync-time analysis, usually because the original exceeded Anthropic vision's 5 MB cap. New photos will succeed (the resize fix in `analysePhoto.ts` handles this). To recover old photos, run the backfill script — see [Section 19](#19-maintenance-scripts).
+
+**Bug-report status changes don't appear in the inspector's "My Reports" view**
+→ The migration `20260513000001_bug_report_status_tracking.sql` must be applied to production Supabase. Run it once via Supabase SQL Editor. The file adds the `status` / `resolution_notes` / `resolved_version` / `duplicate_of` / `updated_at` columns plus the `bug_reports_select_own` RLS policy. Without that policy, inspectors get an empty list because RLS blocks them from reading their own rows.
 
 **`pm_roster` does not exist error when running migration 00004**
 → Migration 00004 depends on 00002. Run 00002 first, then 00004.

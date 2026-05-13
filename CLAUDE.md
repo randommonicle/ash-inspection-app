@@ -351,6 +351,15 @@ When the reassignment is triggered from the pre-report checklist (where the insp
 - **Offline** — neutral note if the network hook reports offline
 A `syncTriggeredRef` fires sync once on screen mount; subsequent reassignments trigger their own sync passes.
 
+### Bug-report lifecycle (May 2026)
+`server/routes/bugReport.ts` accepts submissions from the in-app `BugReportModal` and emails the admin. `bug_reports` rows carry a full lifecycle: `status` (open / in_progress / fixed / wont_fix / duplicate), `resolution_notes`, `resolved_version`, `duplicate_of` (UUID self-FK), `updated_at` (touched by trigger on every UPDATE). Admin moves a report through the lifecycle from the `/admin` dashboard → Bug Reports tab → Edit button per row.
+
+Once an admin marks a report `fixed` with notes + a version (e.g. `0.2.2`), the inspector sees it in their **My Reports** screen (`/my-reports`, [app/src/screens/MyReportsScreen.tsx](app/src/screens/MyReportsScreen.tsx)) with a green Fixed badge and the resolution text. Closing the loop without manual chasing.
+
+`BugReportModal` queries the user's open + in_progress reports on mount and shows them above the form as a soft-dedup hint — "Is this the same issue?" with a link to My Reports. Doesn't block submission; just raises awareness.
+
+RLS: `bug_reports_select_admin` (existing) + new `bug_reports_select_own` (reporter sees their own rows via the anon-key Supabase client). The admin dashboard uses the service-role key and bypasses both.
+
 ### In-app update checker
 `app/src/hooks/useUpdateCheck.ts` + `app/src/components/UpdatePrompt.tsx` + `server/routes/version.ts`  
 - App fetches `GET /api/version` on launch (after login) with an 8s timeout
