@@ -32,6 +32,7 @@ export async function sendReportEmail(params: ReportEmailParams): Promise<void> 
     html: `
       <p>Dear ${inspectorName},</p>
       <p>Please find attached the property inspection report for <strong>${propertyName}</strong> (${propertyRef}), carried out on ${inspectionDate}.</p>
+      ${htmlBuffer ? `<p style="color:#555;font-size:13px;">The HTML copy is interactive — tap any photo to enlarge. Download it from this email to view, as most email clients won't preview HTML attachments for security reasons.</p>` : ''}
       <p>This report was generated automatically by the ASH Inspection App.</p>
       <br />
       <p>ASH Chartered Surveyors</p>
