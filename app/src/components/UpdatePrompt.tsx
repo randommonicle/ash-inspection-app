@@ -2,11 +2,19 @@
 // forceUpdate=true removes the dismiss button — use sparingly, only for
 // breaking changes (e.g. a DB schema change that makes the old app unusable).
 //
-// Download flow: opens the APK URL in a Chrome Custom Tab (Android's system
-// browser). Android's download manager picks it up, downloads the APK, and
-// prompts the user to install it. "Install from unknown sources" must be
-// enabled once — PMs should already have done this when first sideloading.
+// Download flow: hands the APK URL to Capacitor's Browser plugin, which on
+// Android explicitly launches Chrome Custom Tab. The Android download manager
+// then picks up the APK and prompts installation. The first time, Android
+// will ask the user to grant "Install unknown apps" to Chrome — that's a
+// one-off per device.
+//
+// Why not window.open: on Capacitor 6 with androidScheme:'https', window.open
+// can resolve INSIDE the WebView itself. The bytes download but the WebView
+// has no concept of installing an APK, so the user sees a stuck 100% bar.
+// Browser.open guarantees the handoff to an external browser.
 
+import { useState } from 'react'
+import { Browser } from '@capacitor/browser'
 import type { VersionInfo } from '../hooks/useUpdateCheck'
 
 interface Props {
@@ -15,11 +23,24 @@ interface Props {
 }
 
 export function UpdatePrompt({ info, onDismiss }: Props) {
-  const handleDownload = () => {
-    if (info.apkUrl) {
-      // _blank opens Chrome Custom Tab on Android — the system download
-      // manager intercepts the APK and prompts installation automatically.
+  const [downloading, setDownloading] = useState(false)
+  const [showHint,    setShowHint]    = useState(false)
+
+  const handleDownload = async () => {
+    if (!info.apkUrl) return
+    setDownloading(true)
+    try {
+      await Browser.open({ url: info.apkUrl })
+      // After Custom Tab opens, surface a hint in case Android doesn't auto-
+      // prompt for install — the most common cause is missing "Install unknown
+      // apps" permission for Chrome.
+      setShowHint(true)
+    } catch {
+      // Web preview / non-Capacitor environment fallback. Should not happen
+      // on a production device but keeps `npm run dev` workable.
       window.open(info.apkUrl, '_blank')
+    } finally {
+      setDownloading(false)
     }
   }
 
@@ -62,14 +83,28 @@ export function UpdatePrompt({ info, onDismiss }: Props) {
             </div>
           )}
 
+          {/* Post-download hint — shown once the user has tapped Download. Most
+              support calls about "the update doesn't install" are caused by
+              the per-source "Install unknown apps" permission not being
+              granted to Chrome on first run. */}
+          {showHint && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 space-y-1.5">
+              <p className="text-xs font-semibold text-blue-900">After the download finishes</p>
+              <p className="text-xs text-blue-800 leading-relaxed">
+                Android may ask you to <strong>allow installs from Chrome</strong> — tap allow, then open the APK from your Downloads notification or Files app.
+              </p>
+            </div>
+          )}
+
           {/* Buttons */}
           <div className="space-y-2.5 pb-1">
             {info.apkUrl ? (
               <button
                 onClick={handleDownload}
-                className="w-full py-4 rounded-xl bg-ash-navy text-white font-bold text-base active:scale-[0.98] transition"
+                disabled={downloading}
+                className="w-full py-4 rounded-xl bg-ash-navy text-white font-bold text-base active:scale-[0.98] transition disabled:opacity-60"
               >
-                Download &amp; Install
+                {downloading ? 'Opening download…' : 'Download & Install'}
               </button>
             ) : (
               <p className="text-xs text-gray-400 text-center">

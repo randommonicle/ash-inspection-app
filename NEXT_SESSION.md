@@ -1,6 +1,48 @@
 # Next Session — Pick-up Notes
 
-Captured 2026-05-13 at end of work-day. Pick up at home by reading this file top-to-bottom, then working through "Suggested order" at the bottom.
+> **2026-05-13 end-of-day update:** Almost everything in this file has been shipped — v0.2.3 is live on Railway and the signed APK is on GitHub. See the new top-of-file section directly below for what's outstanding. The original handover notes are retained beneath for traceability.
+
+---
+
+## 0. Outstanding from 2026-05-13 evening
+
+### 0a. In-app updater hangs at 100% download
+
+**Symptom:** When the auto-update prompt appears and the user taps Download, the APK reaches 100% downloaded but the install dialog never appears — it just sits there.
+
+**Likely causes** (most → least probable):
+
+1. **`window.open(apkUrl, '_blank')` is resolving inside the Capacitor WebView**, not Chrome Custom Tab. The WebView downloads the bytes but has no concept of "install APK", so it stalls. Fix: swap for Capacitor's `Browser.open({url})` plugin — guarantees external handoff.
+2. **"Install unknown apps" permission** not granted to the browser/source. Even with Custom Tab working, Android won't pop the install dialog until the source has this permission. One-time grant per source.
+3. Combination of both — the first one fails silently and there's no fallback to the second.
+
+**First diagnostic step next session:** open Files app → Downloads folder on the device. If the APK is sitting there, the download succeeded and it's a permission issue; if it's not there, the download is stuck inside the WebView sandbox and needs the plugin swap.
+
+**Plan B if Plan A doesn't fix it:** download the APK via `Filesystem` plugin to the public Downloads directory, then use a file-opener plugin (`@capacitor-community/file-opener` or similar) to fire an `Intent.ACTION_VIEW` against the APK — that's the path the Android package installer expects. Needs `REQUEST_INSTALL_PACKAGES` in AndroidManifest.xml.
+
+**Files involved:**
+- [`app/src/hooks/useUpdateCheck.ts`](app/src/hooks/useUpdateCheck.ts)
+- [`app/src/components/UpdatePrompt.tsx`](app/src/components/UpdatePrompt.tsx)
+
+**Effort:** ~30 min for Plan A. ~half a day for Plan B if needed.
+
+### 0b. Audit remediation (when ready to move toward commercial launch)
+
+The independent audit of v0.2.3 (13 May 2026) returned **AMBER**. Three Hard Stops block commercial launch:
+
+1. MFA on Supabase Auth
+2. Documented DPIA
+3. Supabase paid-tier upgrade with verified PITR
+
+Plus four Red Flags (signed DPAs with US processors, written LIA, in-app Transparency Notice for AI use, sole-developer responder model).
+
+Full breakdown in `audit/ASH_Inspection_App_Audit_Report.docx` and memory file `project_ash_audit_remediation.md`. The statutory hook is the **UK DPA 2026 (Code of Practice on AI and Automated Decision-Making) Regulations**, in force 12 May 2026.
+
+Don't tackle these in a bug-squash session — they want their own focused chunk of work.
+
+---
+
+## (Original notes below — most items shipped on 2026-05-13)
 
 ---
 
