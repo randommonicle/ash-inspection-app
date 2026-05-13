@@ -288,43 +288,49 @@ export function ActiveInspectionScreen() {
 
   const handleCamera = useCallback(async () => {
     if (!inspectionId) return
-    try {
-      const photo = await Camera.getPhoto({
-        quality:       85,
-        resultType:    CameraResultType.Uri,
-        source:        CameraSource.Camera,
-        saveToGallery: false,
-      })
+    // Capture lastObs once so every photo in a burst links to the same
+    // observation, even if a transcription completes mid-burst.
+    const lastObs = observations[observations.length - 1]
 
-      const filename = `photo_${Date.now()}.jpg`
-      let localPath  = photo.path ?? ''
-      let webPath    = photo.webPath ?? ''
-
-      if (photo.path) {
-        const { data: base64 } = await Filesystem.readFile({ path: photo.path })
-        await Filesystem.writeFile({
-          path:      filename,
-          data:      base64 as string,
-          directory: Directory.Documents,
+    while (true) {
+      try {
+        const photo = await Camera.getPhoto({
+          quality:       85,
+          resultType:    CameraResultType.Uri,
+          source:        CameraSource.Camera,
+          saveToGallery: false,
         })
-        const uri = await Filesystem.getUri({ path: filename, directory: Directory.Documents })
-        localPath  = uri.uri
-        webPath    = Capacitor.convertFileSrc(localPath)
-      }
 
-      // Auto-link to the most recent observation so the photo appears
-      // inside the feed item rather than in the "Unlinked photos" strip.
-      const lastObs = observations[observations.length - 1]
-      const savedPhoto = await createPhoto({
-        inspection_id:  inspectionId,
-        observation_id: lastObs?.id,
-        local_path:     localPath,
-        web_path:       webPath,
-      })
-      setPhotos(prev => [...prev, savedPhoto])
-    } catch (err: unknown) {
-      if (!(err instanceof Error && err.message.includes('cancelled'))) {
+        const filename = `photo_${Date.now()}.jpg`
+        let localPath  = photo.path ?? ''
+        let webPath    = photo.webPath ?? ''
+
+        if (photo.path) {
+          const { data: base64 } = await Filesystem.readFile({ path: photo.path })
+          await Filesystem.writeFile({
+            path:      filename,
+            data:      base64 as string,
+            directory: Directory.Documents,
+          })
+          const uri = await Filesystem.getUri({ path: filename, directory: Directory.Documents })
+          localPath  = uri.uri
+          webPath    = Capacitor.convertFileSrc(localPath)
+        }
+
+        const savedPhoto = await createPhoto({
+          inspection_id:  inspectionId,
+          observation_id: lastObs?.id,
+          local_path:     localPath,
+          web_path:       webPath,
+        })
+        setPhotos(prev => [...prev, savedPhoto])
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes('cancelled')) {
+          // User exited the camera — end the burst.
+          break
+        }
         setError('Camera error — please try again')
+        break
       }
     }
   }, [inspectionId, observations])

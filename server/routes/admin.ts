@@ -404,7 +404,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div class="card rounded-xl p-4">
         <div class="text-2xl font-bold text-orange-400" id="stat-bugs">—</div>
         <div class="text-xs text-slate-400 mt-1">
-          Bug Reports
+          Feedback
           <span id="stat-bugs-open" class="ml-1 text-red-400"></span>
         </div>
       </div>
@@ -416,7 +416,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <button class="tab" data-tab="recent" onclick="switchTab('recent')">Recent Inspections</button>
       <button class="tab" data-tab="pms" onclick="switchTab('pms')">Inspectors</button>
       <button class="tab" data-tab="properties" onclick="switchTab('properties')">Properties</button>
-      <button class="tab" data-tab="bugs" onclick="switchTab('bugs')">Bug Reports</button>
+      <button class="tab" data-tab="bugs" onclick="switchTab('bugs')">Feedback</button>
       <button class="tab" data-tab="costs" onclick="switchTab('costs')">Costs &amp; Usage</button>
     </div>
 
@@ -454,7 +454,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     <div id="panel-bugs" class="tab-panel card rounded-xl overflow-hidden hidden">
       <div class="px-6 py-4 border-b border-slate-700/50">
-        <span class="font-semibold text-white text-sm">Bug Reports &amp; Suggestions</span>
+        <span class="font-semibold text-white text-sm">Feedback</span>
       </div>
       <div id="bugs-body"><div class="p-8 text-center text-slate-500 text-sm">Loading…</div></div>
     </div>
@@ -742,7 +742,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   function renderBugs() {
     const el = document.getElementById('bugs-body')
-    if (!bugsData.length) { el.innerHTML = empty('No bug reports yet'); return }
+    if (!bugsData.length) { el.innerHTML = empty('No feedback yet'); return }
     el.innerHTML = '<table><thead><tr><th>Type</th><th>From</th><th>Description</th><th>Status</th><th>Submitted</th><th></th></tr></thead><tbody>' +
       bugsData.map((r, idx) => {
         const typeBadge = r.type === 'bug'

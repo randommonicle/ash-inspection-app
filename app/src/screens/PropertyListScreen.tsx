@@ -67,7 +67,7 @@ export function PropertyListScreen() {
                 onClick={() => setShowBugReport(true)}
                 className="text-ash-light text-xs underline underline-offset-2 active:opacity-60"
               >
-                Report issue
+                Feedback
               </button>
               <button
                 onClick={signOut}

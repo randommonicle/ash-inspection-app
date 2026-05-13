@@ -5,6 +5,7 @@ import { MODELS } from '../config/models'
 import { PROCESS_OBSERVATION_PROMPT } from '../prompts/processObservation'
 import { GENERATE_SUMMARY_PROMPT } from '../prompts/generateSummary'
 import { buildReportDocx, type ReportObservation, type ReportPhoto, type RecurringItem } from '../services/reportGenerator'
+import { buildReportHtml } from '../services/htmlReportGenerator'
 import { sendReportEmail } from '../services/email'
 import { convertDocxToPdf } from '../services/pdf'
 import { resizeForReport } from '../services/imageProcessor'
@@ -605,9 +606,9 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
       day: 'numeric', month: 'long', year: 'numeric',
     }) + ' (projected)'
 
-    // ── 7. Build Word document ────────────────────────────────────────────────
+    // ── 7. Build Word document + HTML twin ────────────────────────────────────
     currentStage = 'build_docx'
-    const docxBuffer = await buildReportDocx({
+    const reportData = {
       propertyName,
       propertyRef,
       propertyAddress,
@@ -627,7 +628,18 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
       photos:           reportPhotos,
       reportGeneratedAt,
       recurringItems,
-    })
+    }
+    const docxBuffer = await buildReportDocx(reportData)
+    // HTML failures are non-fatal — the DOCX/PDF are the primary deliverables.
+    // If the HTML renderer throws we still send the email without it rather
+    // than losing the whole report.
+    let htmlBuffer: Buffer | null = null
+    try {
+      htmlBuffer = buildReportHtml(reportData)
+      console.log(`[REPORT] HTML twin built (${htmlBuffer.byteLength} bytes)`)
+    } catch (htmlErr) {
+      console.warn('[REPORT] HTML twin failed (non-fatal):', htmlErr instanceof Error ? htmlErr.message : htmlErr)
+    }
 
     // ── 8. Upload to Supabase Storage ─────────────────────────────────────────
     currentStage = 'upload_docx'
@@ -668,6 +680,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
         docxBuffer,
         filename:  baseFilename,
         pdfBuffer,
+        htmlBuffer,
       })
     } else {
       console.warn('[REPORT] RESEND_API_KEY not set — skipping email send')

@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useSync } from '../hooks/useSync'
 import { getInspectionsForProperty, createInspection, deleteInspection, markReportSent, getObservationsForInspection, getPhotosForInspection, updateObservationSection, markInspectionUnsynced } from '../db/database'
 import { generateReport, ReportError } from '../services/report'
+import { freeLocalPhotos, formatFreedBytes } from '../services/cleanup'
 import { PreReportChecklist } from '../components/PreReportChecklist'
 import type { Property, LocalInspection, LocalObservation, LocalPhoto, SectionKey } from '../types'
 import { SECTION_TEMPLATE_ORDER } from '../types'
@@ -28,6 +29,9 @@ export function PropertyDetailScreen() {
   // staged error envelope ({ok:false, stage, message}). Used to show "failed
   // while sending the email" rather than a generic "report failed".
   const [reportErrorStage, setReportErrorStage] = useState<Record<string, string>>({})
+  // After a successful report email we free the on-device JPEGs. The
+  // resulting message is shown inline under the report-sent confirmation.
+  const [cleanupMsg, setCleanupMsg]         = useState<Record<string, string>>({})
   const [progress, setProgress]             = useState(0)
   const [progressStage, setProgressStage]   = useState('')
   const [error, setError]                   = useState('')
@@ -145,6 +149,17 @@ export function PropertyDetailScreen() {
       // Persist report_sent to SQLite so "Regenerate" label survives logout/re-login
       await markReportSent(inspectionId)
       setInspections(prev => prev.map(i => i.id === inspectionId ? { ...i, report_sent: true } : i))
+      // Reclaim phone storage — photos are already in Supabase Storage and the
+      // server pulls from there for any future regeneration. Failures are
+      // silently ignored; the report has already been sent successfully.
+      try {
+        const { deleted, freedBytes } = await freeLocalPhotos(inspectionId)
+        if (deleted > 0) {
+          setCleanupMsg(prev => ({ ...prev, [inspectionId]: `Photos archived to cloud — ${formatFreedBytes(freedBytes)} freed` }))
+        }
+      } catch (cleanupErr) {
+        console.warn('[PROPERTY DETAIL] Local photo cleanup failed:', cleanupErr instanceof Error ? cleanupErr.message : cleanupErr)
+      }
     } catch (err: unknown) {
       const stageLabel = err instanceof ReportError ? err.stageLabel : ''
       console.error(
@@ -361,6 +376,9 @@ export function PropertyDetailScreen() {
                         )}
                         {generatingId !== ins.id && (ins.report_sent || reportResult[ins.id] === 'sent') && (
                           <p className="text-xs text-green-600 text-center font-medium">Report sent to your email ✓</p>
+                        )}
+                        {generatingId !== ins.id && cleanupMsg[ins.id] && (
+                          <p className="text-[10px] text-gray-400 text-center">{cleanupMsg[ins.id]}</p>
                         )}
 
                         {/* Button — label persists across sessions via ins.report_sent */}

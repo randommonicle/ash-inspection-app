@@ -99,7 +99,7 @@ export function BugReportModal({ onClose }: Props) {
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-ash-navy">Report an Issue</h2>
+              <h2 className="text-lg font-bold text-ash-navy">Feedback</h2>
               <button
                 type="button"
                 onClick={() => { onClose(); navigate('/my-reports') }}

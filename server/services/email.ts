@@ -9,12 +9,13 @@ export interface ReportEmailParams {
   propertyRef: string
   inspectionDate: string
   docxBuffer: Buffer
-  filename: string          // base filename without extension, e.g. "ASH_Inspection_B69_1_May_2026"
-  pdfBuffer?: Buffer | null // optional — attached if provided
+  filename: string           // base filename without extension, e.g. "ASH_Inspection_B69_1_May_2026"
+  pdfBuffer?: Buffer | null  // optional — attached if provided
+  htmlBuffer?: Buffer | null // optional self-contained HTML report (click-to-enlarge via inline lightbox)
 }
 
 export async function sendReportEmail(params: ReportEmailParams): Promise<void> {
-  const { to, inspectorName, propertyName, propertyRef, inspectionDate, docxBuffer, filename, pdfBuffer } = params
+  const { to, inspectorName, propertyName, propertyRef, inspectionDate, docxBuffer, filename, pdfBuffer, htmlBuffer } = params
 
   // FORWARD: PROD-GATE — remove REPORT_TO_OVERRIDE from Railway Variables (and
   // delete this fallback) before client-facing use. With the env var set, every
@@ -45,6 +46,11 @@ export async function sendReportEmail(params: ReportEmailParams): Promise<void> 
       ...(pdfBuffer ? [{
         filename: `${filename}.pdf`,
         content:  pdfBuffer.toString('base64'),
+      }] : []),
+      // HTML — self-contained, click-to-enlarge photos, opens in any browser
+      ...(htmlBuffer ? [{
+        filename: `${filename}.html`,
+        content:  htmlBuffer.toString('base64'),
       }] : []),
     ],
   })
