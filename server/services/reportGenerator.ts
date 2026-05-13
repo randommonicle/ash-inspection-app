@@ -258,7 +258,7 @@ function buildInspectionDetailsTable(data: ReportData): Table {
       new TableRow({ children: [labelCell('Address'), valueCell(data.propertyAddress), labelCell('Units'), valueCell(String(data.propertyUnits), true)] }),
       new TableRow({ children: [labelCell('Inspection Date'), valueCell(data.inspectionDate), labelCell('Time'), valueCell(timeRange, true)] }),
       new TableRow({ children: [labelCell('Weather'), valueCell(data.weather ?? '—'), labelCell('Next Inspection'), valueCell(data.nextInspection ?? '—', true)] }),
-      new TableRow({ children: [labelCell('Inspector'), valueCell(`${data.inspectorName}, Senior Property Manager`), labelCell('Management Co.'), valueCell(data.managementCompany, true)] }),
+      new TableRow({ children: [labelCell('Inspector'), valueCell(`${data.inspectorName}, ${data.inspectorTitle}`), labelCell('Management Co.'), valueCell(data.managementCompany, true)] }),
     ],
   })
 }
