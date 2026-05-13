@@ -56,7 +56,7 @@ router.post('/', requireAuth, photoAnalysisLimiter, async (req: Request, res: Re
     // Resize before sending to Anthropic — vision API rejects anything over
     // 5 MB base64, which modern phone cameras routinely produce.
     const resized = await resizeForReport(Buffer.from(arrayBuffer))
-    const base64  = resized.toString('base64')
+    const base64  = resized.buffer.toString('base64')
 
     const result = await analyseImage(base64, 'image/jpeg', {
       userId:       req.userId,

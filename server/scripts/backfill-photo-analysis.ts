@@ -72,7 +72,7 @@ async function main() {
 
       const raw     = Buffer.from(await file.arrayBuffer())
       const resized = await resizeForReport(raw)
-      const base64  = resized.toString('base64')
+      const base64  = resized.buffer.toString('base64')
 
       const result = await analyseImage(base64, 'image/jpeg', {
         inspectionId: photo.inspection_id,
@@ -89,7 +89,7 @@ async function main() {
         continue
       }
 
-      console.log(`[OK]   Photo ${photo.id} (${raw.byteLength} → ${resized.byteLength} bytes): "${result.suggested_caption}"`)
+      console.log(`[OK]   Photo ${photo.id} (${raw.byteLength} → ${resized.buffer.byteLength} bytes): "${result.suggested_caption}"`)
       ok++
     } catch (err) {
       console.error(`[FAIL] Photo ${photo.id}:`, err instanceof Error ? err.message : err)

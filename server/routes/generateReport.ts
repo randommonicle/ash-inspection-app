@@ -384,6 +384,8 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
 
     for (const photo of (rawPhotos ?? [])) {
       let imageBuffer: Buffer | null = null
+      let imageWidth:  number | null = null
+      let imageHeight: number | null = null
 
       if (photo.storage_path) {
         try {
@@ -399,8 +401,11 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
             // phone photos (>5 MB) get rejected by Anthropic vision and balloon
             // the report past Resend's 40 MB cap if embedded raw.
             try {
-              imageBuffer = await resizeForReport(rawBuffer)
-              console.log(`[REPORT] Photo ${photo.id} downloaded and resized (${rawBuffer.byteLength} → ${imageBuffer.byteLength} bytes)`)
+              const resized = await resizeForReport(rawBuffer)
+              imageBuffer = resized.buffer
+              imageWidth  = resized.width
+              imageHeight = resized.height
+              console.log(`[REPORT] Photo ${photo.id} downloaded and resized (${rawBuffer.byteLength} → ${imageBuffer.byteLength} bytes, ${imageWidth}×${imageHeight})`)
             } catch (resizeErr) {
               imageBuffer = rawBuffer
               console.warn(`[REPORT] Photo ${photo.id} resize failed, using raw ${rawBuffer.byteLength} bytes:`, resizeErr instanceof Error ? resizeErr.message : resizeErr)
@@ -431,6 +436,8 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
         caption:          photo.caption ?? null,
         opus_description: opusDescription,
         imageBuffer,
+        imageWidth,
+        imageHeight,
       })
     }
 

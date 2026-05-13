@@ -88,6 +88,12 @@ export interface ReportPhoto {
   caption: string | null
   opus_description: { suggested_caption?: string; description?: string; notable_issues?: string[]; section_key?: string } | null
   imageBuffer: Buffer | null
+  // Real pixel dimensions of imageBuffer after resize. Populated by
+  // generateReport.ts so the photo grid can render at the source aspect ratio
+  // instead of forcing a 4:3 box. Null only if resize failed and we fell back
+  // to the raw buffer — in that case the grid uses a sensible default ratio.
+  imageWidth:  number | null
+  imageHeight: number | null
 }
 
 export interface RecurringItem {
@@ -346,7 +352,10 @@ function photoGrid(sectionLabel: string, photos: ReportPhoto[]): (Table | Paragr
       // DXA → pixels: divide by 15 (1440 DXA = 1 inch = 96 px)
       // Subtract cell margins (100 DXA each side) before converting
       const imgW = Math.round((width - 200) / 15)
-      const imgH = Math.round(imgW * 0.75) // 4:3 landscape ratio
+      // Use the photo's real aspect ratio so portrait shots aren't squashed
+      // into a 4:3 box. Falls back to 4:3 only if dimensions weren't captured.
+      const aspect = photo.imageWidth && photo.imageHeight ? photo.imageHeight / photo.imageWidth : 0.75
+      const imgH = Math.round(imgW * aspect)
 
       try {
         children.push(
@@ -680,7 +689,8 @@ function buildPhotoAppendix(
       const cells = row.map(photo => {
         const caption = photo.opus_description?.suggested_caption ?? photo.caption ?? ''
         const imgW    = Math.round((thumbWidth - 160) / 15)
-        const imgH    = Math.round(imgW * 0.75)
+        const aspect  = photo.imageWidth && photo.imageHeight ? photo.imageHeight / photo.imageWidth : 0.75
+        const imgH    = Math.round(imgW * aspect)
         const kids: Paragraph[] = []
         try {
           kids.push(new Paragraph({
