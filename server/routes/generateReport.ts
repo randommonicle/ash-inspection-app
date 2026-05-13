@@ -7,6 +7,7 @@ import { GENERATE_SUMMARY_PROMPT } from '../prompts/generateSummary'
 import { buildReportDocx, type ReportObservation, type ReportPhoto, type RecurringItem } from '../services/reportGenerator'
 import { sendReportEmail } from '../services/email'
 import { convertDocxToPdf } from '../services/pdf'
+import { resizeForReport } from '../services/imageProcessor'
 import { getWeatherForInspection } from '../services/weather'
 import { requireAuth } from '../middleware/auth'
 import { reportLimiter } from '../middleware/rateLimits'
@@ -393,8 +394,17 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
           if (dlErr) {
             console.warn(`[REPORT] Photo ${photo.id} download failed:`, dlErr.message)
           } else {
-            imageBuffer = Buffer.from(await fileData.arrayBuffer())
-            console.log(`[REPORT] Photo ${photo.id} downloaded (${imageBuffer.byteLength} bytes)`)
+            const rawBuffer = Buffer.from(await fileData.arrayBuffer())
+            // Resize once and reuse for both Opus analysis and DOCX embed. Modern
+            // phone photos (>5 MB) get rejected by Anthropic vision and balloon
+            // the report past Resend's 40 MB cap if embedded raw.
+            try {
+              imageBuffer = await resizeForReport(rawBuffer)
+              console.log(`[REPORT] Photo ${photo.id} downloaded and resized (${rawBuffer.byteLength} → ${imageBuffer.byteLength} bytes)`)
+            } catch (resizeErr) {
+              imageBuffer = rawBuffer
+              console.warn(`[REPORT] Photo ${photo.id} resize failed, using raw ${rawBuffer.byteLength} bytes:`, resizeErr instanceof Error ? resizeErr.message : resizeErr)
+            }
           }
         } catch (err) {
           console.warn(`[REPORT] Photo ${photo.id} download error:`, err)

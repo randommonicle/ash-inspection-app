@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express'
 import { supabase } from '../services/supabase'
 import { analyseImage } from '../services/anthropic'
+import { resizeForReport } from '../services/imageProcessor'
 import { requireAuth } from '../middleware/auth'
 import { photoAnalysisLimiter } from '../middleware/rateLimits'
 
@@ -52,7 +53,10 @@ router.post('/', requireAuth, photoAnalysisLimiter, async (req: Request, res: Re
     }
 
     const arrayBuffer = await data.arrayBuffer()
-    const base64 = Buffer.from(arrayBuffer).toString('base64')
+    // Resize before sending to Anthropic — vision API rejects anything over
+    // 5 MB base64, which modern phone cameras routinely produce.
+    const resized = await resizeForReport(Buffer.from(arrayBuffer))
+    const base64  = resized.toString('base64')
 
     const result = await analyseImage(base64, 'image/jpeg', {
       userId:       req.userId,

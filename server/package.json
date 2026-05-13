@@ -9,7 +9,8 @@
     "build": "tsc",
     "test:unit": "node --require ./node_modules/tsx/dist/cjs/index.cjs --test tests/unit.test.ts",
     "test:integration": "node --env-file=.env --require ./node_modules/tsx/dist/cjs/index.cjs --test tests/integration.test.ts",
-    "test": "npm run test:unit"
+    "test": "npm run test:unit",
+    "backfill-photos": "node --env-file=.env node_modules/tsx/dist/cli.mjs scripts/backfill-photo-analysis.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -20,7 +21,8 @@
     "express": "^4.19.2",
     "express-rate-limit": "^8.5.0",
     "node-cron": "^4.2.1",
-    "resend": "^6.12.2"
+    "resend": "^6.12.2",
+    "sharp": "^0.33.5"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
