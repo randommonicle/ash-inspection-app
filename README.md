@@ -793,7 +793,7 @@ Before this app is used in production with real inspections:
 - [x] **Set up release signing** *(May 2026)* — Keystore + Gradle signing config done. See [Section 9](#9-release-signing-and-the-v020-distribution-pipeline).
 - [ ] **Verify Resend domain** — `propertyappdev.co.uk` is currently the sending domain. If switching to `ashproperty.co.uk` later, verify it in Resend and update the `from` address in `server/services/email.ts`.
 - [ ] **Wipe test data** — Before go-live, truncate `inspections`, `observations`, `photos`, `api_usage_log`, and clear the `inspection-files` storage bucket. Leave `users` and `properties` intact.
-- [ ] **Remove `REPORT_TO_OVERRIDE`** from Railway Variables so reports route to each inspector's own address.
+- [x] **Remove `REPORT_TO_OVERRIDE`** *(May 2026)* — Cleared from Railway Variables and removed from `server/services/email.ts`. Reports now always route to the inspector's registered email.
 - [ ] **Enable Supabase Auth email confirmation** — currently off to allow instant registration during development. Turn on for production so new accounts require email verification.
 - [ ] **Google Play Store listing** *(deferred)* — Optional. The in-app update prompt covers OTA updates without Play Store. Only needed if ASH formally adopt the app for broader distribution.
 

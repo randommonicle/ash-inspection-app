@@ -112,6 +112,7 @@ describe('buildReportDocx', () => {
     inspectorName:      'Test Inspector',
     inspectorTitle:     'Chartered Surveyor',
     inspectorEmail:     'test@ashproperty.co.uk',
+    inspectorSignature: null,
     overallSummary:     'The property is in good general condition with minor maintenance items noted.',
     reportGeneratedAt:  new Date().toISOString(),
     recurringItems:     [],
@@ -214,6 +215,7 @@ describe('buildReportHtml', () => {
     inspectorName:     'Test Inspector',
     inspectorTitle:    'Chartered Surveyor',
     inspectorEmail:    'test@ashproperty.co.uk',
+    inspectorSignature: null,
     overallSummary:    'The property is in good general condition.',
     reportGeneratedAt: new Date().toISOString(),
     recurringItems:    [],
@@ -296,5 +298,55 @@ describe('buildReportHtml', () => {
     assert.ok(html.includes('data:image/jpeg;base64,'), 'Photo was not inlined as a data URI')
     assert.ok(html.includes('id="photo-p1"'),           'Lightbox anchor missing for photo')
     assert.ok(html.includes('href="#photo-p1"'),        'Thumb does not link to its lightbox')
+  })
+
+  test('renders inspector signature as inline base64 when buffer present, placeholder when null', () => {
+    const tinyPng = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+
+    const withSig = buildReportHtml({
+      ...BASE_DATA,
+      inspectorSignature: tinyPng,
+    }).toString('utf-8')
+    assert.ok(withSig.includes('class="signature-img"'),                  'Signature image element missing')
+    assert.ok(withSig.includes('data:image/png;base64,'),                 'Signature not inlined as PNG data URI')
+    assert.ok(!withSig.includes('<span class="signature-placeholder">'), 'Placeholder rendered alongside real signature')
+
+    const withoutSig = buildReportHtml(BASE_DATA).toString('utf-8')
+    assert.ok(withoutSig.includes('<span class="signature-placeholder">'), 'Placeholder missing when signature is null')
+    assert.ok(!withoutSig.includes('data:image/png;base64,'),              'Stray PNG data URI when signature is null')
+  })
+
+  test('appendixOnly photos appear in the appendix but not in the section body strip', () => {
+    const tinyJpeg = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0])
+    const html = buildReportHtml({
+      ...BASE_DATA,
+      photos: [
+        {
+          id: 'primary', observation_id: 'obs-001', caption: 'Primary shot',
+          opus_description: { section_key: 'external_approach' },
+          imageBuffer: tinyJpeg, imageWidth: null, imageHeight: null,
+        },
+        {
+          id: 'dup', observation_id: 'obs-001', caption: 'Duplicate shot',
+          opus_description: { section_key: 'external_approach' },
+          imageBuffer: tinyJpeg, imageWidth: null, imageHeight: null,
+          appendixOnly: true,
+        },
+      ],
+    }).toString('utf-8')
+
+    // Both lightboxes always exist (so the appendix link works)
+    assert.ok(html.includes('id="photo-primary"'), 'Primary lightbox missing')
+    assert.ok(html.includes('id="photo-dup"'),     'Duplicate lightbox missing')
+
+    // But the in-section thumbnail strip only references the primary
+    const beforeAppendix = html.split('Photo Appendix')[0] ?? html
+    assert.ok(beforeAppendix.includes('href="#photo-primary"'), 'Primary should be in body strip')
+    assert.ok(!beforeAppendix.includes('href="#photo-dup"'),    'Duplicate leaked into body strip')
+
+    // And the appendix renders both
+    const appendix = html.split('Photo Appendix')[1] ?? ''
+    assert.ok(appendix.includes('href="#photo-primary"'), 'Primary missing from appendix')
+    assert.ok(appendix.includes('href="#photo-dup"'),     'Duplicate missing from appendix')
   })
 })

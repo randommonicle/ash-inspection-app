@@ -20,6 +20,8 @@ export interface UserProfile {
   full_name: string
   email: string
   role: 'inspector' | 'admin'
+  job_title?: string | null
+  signature_path?: string | null
   created_at: string
 }
 

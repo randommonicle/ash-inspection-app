@@ -64,11 +64,10 @@ SUPABASE_SERVICE_KEY=...         # Service role — bypasses RLS, server-side on
 DEEPGRAM_API_KEY=...              # Required — transcription is server-side
 RESEND_API_KEY=...
 ADMIN_PASSWORD=...                # /admin dashboard login (username always "admin")
-REPORT_TO_OVERRIDE=...            # REMOVE IN PRODUCTION — forces all emails to one address
 ```
 
 ### Railway Variables (production — set in Railway dashboard)
-Same keys as above, minus `REPORT_TO_OVERRIDE` once that's removed, plus the update-checker vars:
+Same keys as above, plus the update-checker vars:
 ```
 APP_VERSION=0.2.0                 # Latest released app version (semver)
 APK_URL=https://github.com/randommonicle/ash-inspection-app/releases/download/v0.2.0/app-release.apk
@@ -458,14 +457,14 @@ Search for `// TODO [PRODUCTION]:` in the codebase to find all flagged items.
 - [x] **`allowNavigation` / `allowMixedContent`** — `app/capacitor.config.ts` (May 2026)  
   Removed. Capacitor config is now minimal: `appId`, `appName`, `webDir`, `androidScheme: 'https'`. Both legacy IP whitelist and HTTP fallback are gone.
 
-- [ ] **Report header email** — `server/services/reportGenerator.ts`  
-  Currently shows `ben@ashproperty.co.uk`. Replace with the firm's general enquiries address before client-facing use.
+- [x] **Report header email** — `server/services/reportGenerator.ts`, `server/services/htmlReportGenerator.ts` (May 2026)  
+  Both DOCX and HTML headers render `${inspectorEmail}` — the PM's registered work email from `public.users`. No firm-wide fallback is needed because every inspector has their own work email on file.
 
-- [ ] **`REPORT_TO_OVERRIDE`** — Railway Variables + `server/services/email.ts`  
-  If still set, all reports route to one address regardless of which inspector generated them. Remove from Railway Variables for per-inspector routing.
+- [x] **`REPORT_TO_OVERRIDE`** — Railway Variables cleared, code removed from `server/services/email.ts` (May 2026)  
+  Env var no longer set in Railway. Code lookup removed. Every inspector now receives reports at their own registered email by default.
 
-- [ ] **Property feature flag UX** — `app/src/components/PreReportChecklist.tsx`  
-  When inspector marks a section N/A for the first time, prompt: *"Does this property have a [lift/car park]?"* If No → update `has_lift`/`has_car_park` on the Supabase `properties` record so future inspections pre-populate N/A automatically. Requires inspector write permission on those columns (RLS update needed). Note: `has_roof_access` is different — the roof section may still be inspectable from ground level even without physical access.
+- [x] **Property feature flag UX** — `app/src/components/PreReportChecklist.tsx` (already shipped)  
+  When the inspector marks `car_park` or `lifts` N/A for a property that currently has the feature, an inline prompt asks "Does this property have a [Lift/Car Park]?". "No, never" calls `supabase.rpc('update_property_flag', …)` to set `has_lift`/`has_car_park = false` on the properties row. Future inspections auto-pre-mark the section N/A. Note: `has_roof_access` is intentionally NOT in this flow — the roof section may still be inspectable from ground level even without access.
 
 ---
 

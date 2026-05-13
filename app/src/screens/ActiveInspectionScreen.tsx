@@ -11,6 +11,7 @@ import { useSync } from '../hooks/useSync'
 import { RecordButton } from '../components/RecordButton'
 import { ObservationFeedItem } from '../components/ObservationFeedItem'
 import { SectionPicker } from '../components/SectionPicker'
+import { PhotoViewer } from '../components/PhotoViewer'
 import { transcribeAudio } from '../services/transcription'
 import { classifyNarration } from '../services/classify'
 import {
@@ -64,6 +65,10 @@ export function ActiveInspectionScreen() {
 
   // "Add more" — when set, the next recording appends to this observation
   const [appendingToId, setAppendingToId] = useState<string | null>(null)
+
+  // Tap-to-fullscreen viewer for the "Unlinked photos" strip. Observation-
+  // linked photos use their own viewer state inside ObservationFeedItem.
+  const [unlinkedFullscreen, setUnlinkedFullscreen] = useState<LocalPhoto | null>(null)
 
   // Offline audio queue
   const [pendingCount, setPendingCount]   = useState(0)
@@ -505,11 +510,16 @@ export function ActiveInspectionScreen() {
             <div className="flex gap-2 flex-wrap">
               {photos.filter(p => !p.observation_id).map(photo => (
                 <div key={photo.id} className="relative shrink-0">
-                  <img
-                    src={photo.web_path ?? photo.local_path}
-                    alt="Inspection photo"
-                    className="w-20 h-20 object-cover rounded-lg border border-gray-200"
-                  />
+                  <button
+                    onClick={() => setUnlinkedFullscreen(photo)}
+                    className="active:opacity-80 transition"
+                  >
+                    <img
+                      src={photo.web_path ?? photo.local_path}
+                      alt="Inspection photo"
+                      className="w-20 h-20 object-cover rounded-lg border border-gray-200"
+                    />
+                  </button>
                   <button
                     onClick={() => handleDeletePhoto(photo.id)}
                     className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center active:bg-red-600 transition shadow-sm"
@@ -563,6 +573,15 @@ export function ActiveInspectionScreen() {
           current={pickerObservation.section_key}
           onSelect={key => handleManualOverride(pickerFor, key)}
           onClose={() => setPickerFor(null)}
+        />
+      )}
+
+      {/* Fullscreen viewer for unlinked photos */}
+      {unlinkedFullscreen && (
+        <PhotoViewer
+          photo={unlinkedFullscreen}
+          onClose={() => setUnlinkedFullscreen(null)}
+          onDelete={handleDeletePhoto}
         />
       )}
     </div>

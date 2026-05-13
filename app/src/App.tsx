@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom'
 import { App as CapApp } from '@capacitor/app'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
@@ -10,6 +10,7 @@ import { PropertyDetailScreen } from './screens/PropertyDetailScreen'
 import { ActiveInspectionScreen } from './screens/ActiveInspectionScreen'
 import { MyReportsScreen } from './screens/MyReportsScreen'
 import { UpdatePrompt } from './components/UpdatePrompt'
+import { SignatureCapture } from './components/SignatureCapture'
 import { useUpdateCheck } from './hooks/useUpdateCheck'
 import { initDatabase } from './db/database'
 
@@ -33,8 +34,11 @@ function BackButtonHandler() {
 }
 
 function AppRoutes() {
-  const { session, loading } = useAuth()
+  const { session, profile, loading } = useAuth()
   const { updateInfo, dismiss } = useUpdateCheck()
+  // Local override so the gate dismisses immediately on save — avoids waiting
+  // for the profile re-fetch round-trip before letting the inspector through.
+  const [signatureJustSaved, setSignatureJustSaved] = useState(false)
 
   useEffect(() => {
     if (session) {
@@ -42,7 +46,21 @@ function AppRoutes() {
     }
   }, [session])
 
+  // Reset the local override whenever the session changes so a fresh login
+  // re-runs the gate based on the new profile.
+  useEffect(() => { setSignatureJustSaved(false) }, [session?.user.id])
+
   if (loading) return <LoadingSpinner />
+
+  // First-time signature gate — blocks everything until the inspector has
+  // drawn and saved a signature. We only know whether one exists once the
+  // profile has loaded; the LoadingSpinner above covers the brief gap.
+  const needsSignature = session && profile && !profile.signature_path && !signatureJustSaved
+  if (needsSignature) {
+    return (
+      <SignatureCapture onComplete={() => setSignatureJustSaved(true)} />
+    )
+  }
 
   return (
     <BrowserRouter>

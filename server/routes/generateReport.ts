@@ -230,6 +230,94 @@ Risk levels: High = immediate safety or legal risk (within 5 working days), Medi
   }
 }
 
+// Ask Sonnet to identify groups of photos within the same section that show
+// the same subject (multiple shots of one crack/wall/defect). Mutates each
+// flagged photo to set `appendixOnly = true`. Conservative on purpose — we'd
+// rather show a true duplicate than hide a distinct issue.
+async function flagDuplicatePhotos(photos: ReportPhoto[], logCtx: LogCtx): Promise<void> {
+  const annotated = photos.filter(p =>
+    p.imageBuffer && p.opus_description?.suggested_caption
+  )
+  if (annotated.length < 2) return
+
+  // Group by Opus-suggested section; duplicate detection only runs within a
+  // section since two similar-looking photos in different sections are by
+  // definition not the same subject.
+  const bySection = new Map<string, ReportPhoto[]>()
+  for (const photo of annotated) {
+    const key = photo.opus_description!.section_key ?? '__unsectioned__'
+    const arr = bySection.get(key) ?? []
+    arr.push(photo)
+    bySection.set(key, arr)
+  }
+
+  for (const [sectionKey, sectionPhotos] of bySection) {
+    if (sectionPhotos.length < 2) continue
+
+    const lines = sectionPhotos.map((p, i) => {
+      const cap  = p.opus_description!.suggested_caption ?? ''
+      const desc = p.opus_description!.description ?? ''
+      return `[${i}] ${cap}${desc && desc !== cap ? ` — ${desc}` : ''}`
+    }).join('\n')
+
+    const prompt = `You are reviewing inspection photos from the "${sectionKey}" section of a property inspection report. Identify groups of photos that clearly show the SAME subject — multiple shots of the same crack, the same defect, the same wall area from slightly different angles.
+
+Photos:
+${lines}
+
+For each group of duplicates, pick ONE photo to keep visible inline (the primary) and return the indices of the OTHERS — they will be moved to the Photo Appendix only.
+
+Be CONSERVATIVE. Only flag photos that are clearly the same subject. Two different defects on the same wall are NOT duplicates. Photos of different items even if visually similar are NOT duplicates. When in doubt, do not flag.
+
+Respond ONLY with valid JSON in this exact format, no other text:
+{"appendix_only": [<indices to move to appendix only>]}
+
+If no duplicates are found, respond {"appendix_only": []}.`
+
+    try {
+      const msg = await anthropic.messages.create({
+        model:      MODELS.OBSERVATION,
+        max_tokens: 256,
+        messages:   [{ role: 'user', content: prompt }],
+      })
+
+      logUsage({
+        service: 'anthropic', model: MODELS.OBSERVATION, endpoint: 'generate-report/dedup',
+        inspection_id: logCtx.inspectionId, user_id: logCtx.userId,
+        input_tokens: msg.usage.input_tokens, output_tokens: msg.usage.output_tokens,
+        cost_usd: calcAnthropicCost(MODELS.OBSERVATION, msg.usage.input_tokens, msg.usage.output_tokens),
+      })
+
+      const raw  = msg.content[0].type === 'text' ? msg.content[0].text : '{"appendix_only":[]}'
+      const text = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
+
+      let indices: number[]
+      try {
+        const parsed = JSON.parse(text) as { appendix_only?: number[] }
+        indices = Array.isArray(parsed.appendix_only) ? parsed.appendix_only : []
+      } catch {
+        // If the model returned prose, try to extract a [..] array literal
+        const match = text.match(/\[[\d,\s]*\]/)
+        indices = match ? JSON.parse(match[0]) : []
+      }
+
+      const flaggedIds: string[] = []
+      for (const idx of indices) {
+        if (Number.isInteger(idx) && idx >= 0 && idx < sectionPhotos.length) {
+          sectionPhotos[idx].appendixOnly = true
+          flaggedIds.push(sectionPhotos[idx].id)
+        }
+      }
+
+      if (flaggedIds.length > 0) {
+        console.log(`[REPORT] Section ${sectionKey}: flagged ${flaggedIds.length} duplicate(s) for appendix-only`)
+      }
+    } catch (err) {
+      console.warn(`[REPORT] Dedup pass failed for section ${sectionKey} (non-fatal):`, err instanceof Error ? err.message : err)
+    }
+  }
+}
+
 async function generateSummary(observations: ReportObservation[], logCtx: LogCtx): Promise<string> {
   console.log(`[REPORT] Generating overall condition summary`)
 
@@ -276,7 +364,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     currentStage = 'fetch_inspection'
     const { data: inspection, error: inspErr } = await supabase
       .from('inspections')
-      .select('*, users(full_name, email, job_title), properties(name, ref, address, number_of_units, management_company, has_car_park, has_lift, has_roof_access)')
+      .select('*, users(full_name, email, job_title, signature_path), properties(name, ref, address, number_of_units, management_company, has_car_park, has_lift, has_roof_access)')
       .eq('id', inspection_id)
       .single()
 
@@ -309,6 +397,26 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     const inspectorName   = user.full_name as string
     const inspectorEmail  = user.email as string
     const inspectorTitle  = (user.job_title as string | null) ?? 'Property Manager'
+    const signaturePath   = (user.signature_path as string | null) ?? null
+
+    // Download the inspector's signature PNG (if they've captured one yet).
+    // Failure is non-fatal — the report falls back to the printed-line placeholder.
+    let signatureBuffer: Buffer | null = null
+    if (signaturePath) {
+      try {
+        const { data: sigFile, error: sigErr } = await supabase.storage
+          .from('inspection-files')
+          .download(signaturePath)
+        if (sigErr) {
+          console.warn(`[REPORT] Signature download failed (${signaturePath}):`, sigErr.message)
+        } else {
+          signatureBuffer = Buffer.from(await sigFile.arrayBuffer())
+          console.log(`[REPORT] Signature loaded (${signatureBuffer.byteLength} bytes)`)
+        }
+      } catch (err) {
+        console.warn(`[REPORT] Signature download error:`, err)
+      }
+    }
 
     const startDate = new Date(inspection.start_time)
     const inspectionDate = startDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
@@ -533,6 +641,17 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     // Re-sort processedObservations by template_order after any synthesis additions
     processedObservations.sort((a, b) => a.template_order - b.template_order)
 
+    // ── 4b. Identify duplicate photos within each section ────────────────────
+    // Ask Sonnet to group near-duplicates so a section doesn't show the same
+    // wall/defect six times in a row. Duplicates are flagged appendixOnly:true
+    // and skipped in the body grid but kept in the Photo Appendix.
+    currentStage = 'dedup_photos'
+    try {
+      await flagDuplicatePhotos(reportPhotos, logCtx)
+    } catch (err) {
+      console.warn('[REPORT] Duplicate detection failed (non-fatal):', err instanceof Error ? err.message : err)
+    }
+
     // ── 5. Identify recurring items from previous inspection ──────────────────
     currentStage = 'identify_recurring_items'
     let recurringItems: RecurringItem[] = []
@@ -623,6 +742,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
       inspectorName,
       inspectorTitle,
       inspectorEmail,
+      inspectorSignature: signatureBuffer,
       overallSummary,
       observations:     processedObservations,
       photos:           reportPhotos,

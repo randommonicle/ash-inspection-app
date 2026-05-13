@@ -116,9 +116,12 @@ function renderSection(
   photos: ReportPhoto[],
 ): string {
   const sectionObs    = observations.filter(o => o.section_key === sectionKey)
+  // Body strip omits duplicates (they still appear in the Photo Appendix).
   const sectionPhotos = photos.filter(p =>
-    sectionObs.some(o => o.id === p.observation_id) ||
-    p.opus_description?.section_key === sectionKey
+    !p.appendixOnly && (
+      sectionObs.some(o => o.id === p.observation_id) ||
+      p.opus_description?.section_key === sectionKey
+    )
   )
   if (sectionObs.length === 0 && sectionPhotos.length === 0) return ''
 
@@ -505,6 +508,50 @@ body {
   line-height: 1;
 }
 
+/* ── Declaration ── */
+.declaration { margin: 32px 0; page-break-inside: avoid; }
+.declaration h2 {
+  font-family: 'Source Serif 4', Georgia, serif;
+  color: ${C.navy};
+  font-size: 18px;
+  margin: 0 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid ${C.lightBlue};
+}
+.declaration table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.declaration td {
+  padding: 8px 12px;
+  border: 1px solid ${C.midGrey};
+}
+.declaration td.label {
+  font-weight: 600;
+  color: #fff;
+  background: ${C.navy};
+  width: 24%;
+  font-size: 12px;
+}
+.declaration .signature-cell {
+  background: #fff;
+  padding: 12px;
+  min-height: 70px;
+}
+.declaration .signature-img {
+  display: block;
+  max-height: 80px;
+  max-width: 280px;
+  height: auto;
+  width: auto;
+}
+.declaration .signature-placeholder {
+  color: ${C.caption};
+  font-style: italic;
+  letter-spacing: 2px;
+}
+
 /* ── Footer ── */
 .report-footer {
   border-top: 1px solid ${C.lightBlue};
@@ -533,6 +580,10 @@ body {
 export function buildReportHtml(data: ReportData): Buffer {
   const applicable = SECTION_ORDER.filter(key => isSectionApplicable(key, data.propertyFlags))
   const sectionsHtml = applicable.map(key => renderSection(key, data.observations, data.photos)).join('')
+
+  const signatureDataUri = data.inspectorSignature
+    ? `data:image/png;base64,${data.inspectorSignature.toString('base64')}`
+    : null
 
   const flagsBadges = [
     data.propertyFlags.has_car_park    && 'Car park',
@@ -587,6 +638,24 @@ export function buildReportHtml(data: ReportData): Buffer {
   ${sectionsHtml}
 
   ${renderPhotoAppendix(data.photos)}
+
+  <section class="declaration">
+    <h2>Inspector Declaration</h2>
+    <table>
+      <tr><td class="label">Inspector</td><td>${esc(data.inspectorName)}, ${esc(data.inspectorTitle)}, ASH Chartered Surveyors</td></tr>
+      <tr><td class="label">RICS Regulation</td><td>ASH Chartered Surveyors is regulated by RICS</td></tr>
+      <tr><td class="label">Inspection Date</td><td>${esc(data.inspectionDate)}</td></tr>
+      <tr><td class="label">Report Generated</td><td>${esc(data.reportGeneratedAt)}</td></tr>
+      <tr>
+        <td class="label">Signature</td>
+        <td class="signature-cell">
+          ${signatureDataUri
+            ? `<img src="${signatureDataUri}" alt="Inspector signature" class="signature-img" />`
+            : `<span class="signature-placeholder">___________________________________________</span>`}
+        </td>
+      </tr>
+    </table>
+  </section>
 
   <footer class="report-footer">
     <span>Report generated ${esc(data.reportGeneratedAt)}</span>

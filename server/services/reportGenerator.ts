@@ -98,6 +98,10 @@ export interface ReportPhoto {
   // ENABLE_PHOTO_HYPERLINKS=true. When present, each photo in the report
   // becomes a click-to-open link to the full-res copy.
   hiResUrl?:   string | null
+  // True when Sonnet has identified this photo as a near-duplicate of another
+  // in the same section. Such photos are omitted from the in-section grid but
+  // still appear in the Photo Appendix so nothing is lost from the record.
+  appendixOnly?: boolean
 }
 
 export interface RecurringItem {
@@ -121,6 +125,10 @@ export interface ReportData {
   inspectorName: string
   inspectorTitle: string
   inspectorEmail: string
+  // PNG buffer of the inspector's hand-drawn signature. Null until they
+  // capture one via the in-app signature pad. When present, embedded into
+  // the Declaration block instead of the printed-line placeholder.
+  inspectorSignature: Buffer | null
   overallSummary: string
   observations: ReportObservation[]
   photos: ReportPhoto[]
@@ -339,7 +347,9 @@ function actionBox(actionText: string | null): Table {
 
 // ── Photo grid for a section ──────────────────────────────────────────────────
 function photoGrid(sectionLabel: string, photos: ReportPhoto[]): (Table | Paragraph)[] {
-  const embeddable = photos.filter(p => p.imageBuffer)
+  // Body grid skips photos flagged as duplicates — they still appear in the
+  // Photo Appendix, just not inline next to the observation.
+  const embeddable = photos.filter(p => p.imageBuffer && !p.appendixOnly)
   if (embeddable.length === 0) return []
 
   const results: (Table | Paragraph)[] = []
@@ -598,7 +608,7 @@ function buildRecurringItems(items: RecurringItem[]): (Paragraph | Table)[] {
 }
 
 // ── Inspector declaration table ───────────────────────────────────────────────
-function buildDeclaration(inspectorName: string, inspectorTitle: string, inspectionDate: string, reportGeneratedAt: string): (Paragraph | Table)[] {
+function buildDeclaration(inspectorName: string, inspectorTitle: string, inspectionDate: string, reportGeneratedAt: string, signature: Buffer | null): (Paragraph | Table)[] {
   const labelCell = (text: string) => new TableCell({
     borders: border(C.midGrey),
     width: { size: 2400, type: WidthType.DXA },
@@ -615,13 +625,38 @@ function buildDeclaration(inspectorName: string, inspectorTitle: string, inspect
     children: [new Paragraph({ children: [t(text, { italic: true, size: 18, color: C.labelText })] })],
   })
 
-  const signatureCell = () => new TableCell({
-    borders: border(C.midGrey),
-    width: { size: 7506, type: WidthType.DXA },
-    shading: { fill: C.white, type: ShadingType.CLEAR },
-    margins: { top: 600, bottom: 600, left: 140, right: 140 },
-    children: [new Paragraph({ children: [t('___________________________________________', { size: 18 })] })],
-  })
+  // Signature cell: when a captured PNG is available, render it at fixed
+  // height (keeps the cell from blowing out) with auto-width. Otherwise fall
+  // back to the printed-line placeholder so the report still has a clear
+  // signing area.
+  const signatureCell = () => {
+    let children: Paragraph[]
+    if (signature) {
+      try {
+        // Roughly 70 pt tall — fits comfortably in the table cell, leaves a
+        // clear visual signature. Width auto-scales by docx based on the
+        // image's intrinsic aspect ratio.
+        const imageRun = new ImageRun({
+          type: 'png',
+          data: signature,
+          transformation: { width: 220, height: 70 },
+          altText: { title: 'Inspector signature', description: 'Inspector signature', name: 'inspector_signature' },
+        })
+        children = [new Paragraph({ alignment: AlignmentType.LEFT, spacing: { before: 60, after: 60 }, children: [imageRun] })]
+      } catch {
+        children = [new Paragraph({ children: [t('___________________________________________', { size: 18 })] })]
+      }
+    } else {
+      children = [new Paragraph({ children: [t('___________________________________________', { size: 18 })] })]
+    }
+    return new TableCell({
+      borders: border(C.midGrey),
+      width: { size: 7506, type: WidthType.DXA },
+      shading: { fill: C.white, type: ShadingType.CLEAR },
+      margins: { top: signature ? 100 : 600, bottom: signature ? 100 : 600, left: 140, right: 140 },
+      children,
+    })
+  }
 
   return [
     new Paragraph({
@@ -893,7 +928,7 @@ export async function buildReportDocx(data: ReportData): Promise<Buffer> {
   children.push(...buildPhotoAppendix(activeSections, photosBySection))
 
   // ── Inspector declaration ─────────────────────────────────────────────────
-  children.push(...buildDeclaration(data.inspectorName, data.inspectorTitle, data.inspectionDate, data.reportGeneratedAt))
+  children.push(...buildDeclaration(data.inspectorName, data.inspectorTitle, data.inspectionDate, data.reportGeneratedAt, data.inspectorSignature))
 
   const doc = new Document({
     styles: {

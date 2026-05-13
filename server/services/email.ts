@@ -17,17 +17,11 @@ export interface ReportEmailParams {
 export async function sendReportEmail(params: ReportEmailParams): Promise<void> {
   const { to, inspectorName, propertyName, propertyRef, inspectionDate, docxBuffer, filename, pdfBuffer, htmlBuffer } = params
 
-  // FORWARD: PROD-GATE — remove REPORT_TO_OVERRIDE from Railway Variables (and
-  // delete this fallback) before client-facing use. With the env var set, every
-  // report is routed to one address regardless of which inspector generated it;
-  // useful for dev/field tests, unacceptable in production. Grep "PROD-GATE"
-  // across the repo for the full manifest of PoC-grade compromises to remove.
-  const recipient = process.env.REPORT_TO_OVERRIDE ?? to
-  console.log(`[EMAIL] Sending report to ${recipient} for ${propertyRef} — ${propertyName}`)
+  console.log(`[EMAIL] Sending report to ${to} for ${propertyRef} — ${propertyName}`)
 
   const { error } = await resend.emails.send({
     from:    'ASH Property App <reports@propertyappdev.co.uk>',
-    to:      recipient,
+    to:      to,
     subject: `Inspection Report — ${propertyName} (${propertyRef}) — ${inspectionDate}`,
     html: `
       <p>Dear ${inspectorName},</p>
@@ -48,9 +42,11 @@ export async function sendReportEmail(params: ReportEmailParams): Promise<void> 
         filename: `${filename}.pdf`,
         content:  pdfBuffer.toString('base64'),
       }] : []),
-      // HTML — self-contained, click-to-enlarge photos, opens in any browser
+      // HTML — self-contained, click-to-enlarge photos, opens in any browser.
+      // Suffix "_INTERACTIVE" so it stands out from the docx/pdf in the
+      // attachment list and the recipient is more likely to download it.
       ...(htmlBuffer ? [{
-        filename: `${filename}.html`,
+        filename: `${filename}_INTERACTIVE.html`,
         content:  htmlBuffer.toString('base64'),
       }] : []),
     ],
@@ -61,5 +57,5 @@ export async function sendReportEmail(params: ReportEmailParams): Promise<void> 
     throw new Error(`Email send failed: ${JSON.stringify(error)}`)
   }
 
-  console.log(`[EMAIL] Report sent successfully to ${recipient}`)
+  console.log(`[EMAIL] Report sent successfully to ${to}`)
 }

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { LocalObservation, LocalPhoto } from '../types'
 import { SECTION_LABELS } from '../types'
+import { PhotoViewer } from './PhotoViewer'
 
 interface Props {
   observation: LocalObservation
@@ -24,11 +25,6 @@ export function ObservationFeedItem({ observation, photos, onOverride, onAppend,
   const [fullscreenPhoto, setFullscreenPhoto] = useState<LocalPhoto | null>(null)
 
   const isBurst = detectBurst(obsPhotos)
-
-  const handleDeleteFromFullscreen = (photo: LocalPhoto) => {
-    setFullscreenPhoto(null)
-    onDeletePhoto?.(photo.id)
-  }
 
   return (
     <div className={`bg-white rounded-xl border shadow-sm px-4 py-3 transition-all ${
@@ -106,51 +102,11 @@ export function ObservationFeedItem({ observation, photos, onOverride, onAppend,
 
       {/* Fullscreen viewer */}
       {fullscreenPhoto && (
-        <div
-          className="fixed inset-0 z-50 bg-black flex flex-col"
-          onClick={() => setFullscreenPhoto(null)}
-        >
-          {/* Top bar */}
-          <div className="flex justify-between items-center p-4 shrink-0">
-            {onDeletePhoto ? (
-              <button
-                onClick={e => { e.stopPropagation(); handleDeleteFromFullscreen(fullscreenPhoto) }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/80 text-white text-xs font-semibold active:bg-red-500 transition"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-                Delete
-              </button>
-            ) : <div />}
-            <button
-              onClick={() => setFullscreenPhoto(null)}
-              className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center active:bg-white/30 transition"
-            >
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-
-          {/* Photo */}
-          <div className="flex-1 flex items-center justify-center px-4 min-h-0">
-            <img
-              src={fullscreenPhoto.web_path ?? fullscreenPhoto.local_path}
-              alt="Inspection photo"
-              className="max-w-full max-h-full object-contain rounded-lg"
-              onClick={e => e.stopPropagation()}
-            />
-          </div>
-
-          {/* Caption */}
-          {fullscreenPhoto.caption && (
-            <div className="px-6 py-4 shrink-0" onClick={e => e.stopPropagation()}>
-              <p className="text-white/80 text-sm text-center italic">{fullscreenPhoto.caption}</p>
-            </div>
-          )}
-          <div className="pb-8" />
-        </div>
+        <PhotoViewer
+          photo={fullscreenPhoto}
+          onClose={() => setFullscreenPhoto(null)}
+          onDelete={onDeletePhoto}
+        />
       )}
 
       {onAppend && (

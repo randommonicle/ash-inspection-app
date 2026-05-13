@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../contexts/AuthContext'
 import { BugReportModal } from '../components/BugReportModal'
+import { SignatureCapture } from '../components/SignatureCapture'
 import type { Property } from '../types'
 
 export function PropertyListScreen() {
@@ -10,6 +11,7 @@ export function PropertyListScreen() {
   const navigate = useNavigate()
   const [properties, setProperties]     = useState<Property[]>([])
   const [showBugReport, setShowBugReport] = useState(false)
+  const [showSignature, setShowSignature] = useState(false)
   const [query, setQuery]           = useState('')
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState('')
@@ -64,6 +66,12 @@ export function PropertyListScreen() {
             <p className="text-white text-sm font-medium">{profile?.full_name ?? ''}</p>
             <div className="flex gap-3 mt-0.5 justify-end">
               <button
+                onClick={() => setShowSignature(true)}
+                className="text-ash-light text-xs underline underline-offset-2 active:opacity-60"
+              >
+                Signature
+              </button>
+              <button
                 onClick={() => setShowBugReport(true)}
                 className="text-ash-light text-xs underline underline-offset-2 active:opacity-60"
               >
@@ -116,6 +124,12 @@ export function PropertyListScreen() {
       </div>
 
       {showBugReport && <BugReportModal onClose={() => setShowBugReport(false)} />}
+      {showSignature && (
+        <SignatureCapture
+          onComplete={() => setShowSignature(false)}
+          onCancel={() => setShowSignature(false)}
+        />
+      )}
     </div>
   )
 }
