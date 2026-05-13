@@ -26,7 +26,8 @@ Built by Ben Graham. If you are picking this up for the first time, read this en
 16. [Pre-Production Checklist](#16-pre-production-checklist)
 17. [Key Files Reference](#17-key-files-reference)
 18. [Testing](#18-testing)
-19. [Troubleshooting](#19-troubleshooting)
+19. [Maintenance Scripts](#19-maintenance-scripts)
+20. [Troubleshooting](#20-troubleshooting)
 
 ---
 
@@ -573,7 +574,7 @@ Based on a typical inspection with ~15 observations and ~20 photos:
 ```
 Step 1  Fetch inspection, inspector, and property from Supabase
 Step 2  Fetch observations; process any unprocessed raw narrations through Sonnet
-Step 3  Fetch photos; download image data; run late Opus analysis on any unanalysed photos
+Step 3  Fetch photos; download image data; resize each via sharp (max 2048 px, JPEG q82) to keep Opus calls under the 5 MB vision limit and DOCX+PDF under Resend's 40 MB email limit; run late Opus analysis on any unanalysed photos
 Step 4  Synthesise observations for sections that have photos but no narration
 Step 5  Compare current observations against previous inspection to identify recurring items
 Step 6  Generate overall condition summary (Sonnet) + fetch weather (Open-Meteo)
@@ -855,7 +856,30 @@ npm run test:integration
 
 ---
 
-## 19. Troubleshooting
+## 19. Maintenance Scripts
+
+One-shot operational scripts live in `server/scripts/`. They run locally against production Supabase via the service-role key in `server/.env` — there is no separate prod credential, so make sure `server/.env` points at the production project before running.
+
+### Backfill photo analysis
+
+`server/scripts/backfill-photo-analysis.ts` re-runs Opus image analysis on photos whose `opus_description` column is NULL. This is usually caused by the original upload exceeding Anthropic's 5 MB vision limit at capture time — the analysis call failed and was never retried. The script downloads each affected photo from Supabase Storage, resizes it via `services/imageProcessor.ts`, calls Opus, and saves the result.
+
+```
+cd server
+npm run backfill-photos -- <inspection_id>     # backfill one inspection
+npm run backfill-photos -- --all                # backfill every photo with NULL opus_description
+```
+
+Cost: roughly $0.05 per photo (one Opus call each). Time: ~3–5 seconds per photo. Safe to Ctrl+C mid-run — progress is saved to the database after each successful analysis.
+
+> **PowerShell note:** if `npm` triggers a script-execution-policy error, call Node directly:
+> ```
+> node --env-file=.env node_modules/tsx/dist/cli.mjs scripts/backfill-photo-analysis.ts --all
+> ```
+
+---
+
+## 20. Troubleshooting
 
 **Server won't start / `ANTHROPIC_API_KEY is not set`**
 → Check `server/.env` exists and contains the key. The file is gitignored and must be created manually.
@@ -883,6 +907,12 @@ npm run test:integration
 
 **Email not sending**
 → Check `RESEND_API_KEY` is set in Railway. Check that the sending domain (`ashproperty.co.uk`) is verified in Resend. Check Railway logs for `[REPORT]` lines.
+
+**Email fails with `Email content and attachment exceeded the size limit (40MB)`**
+→ The DOCX+PDF attachments are too large for Resend. Caused by oversized phone-camera JPEGs being embedded raw. The fix is already in place (`services/imageProcessor.ts` resizes every photo to ≤2048 px before embed), so this should only recur if the resize fails or the photo count per inspection grows extremely high (50+). Check Railway logs for `[REPORT] Resize failed` warnings, which would point to a corrupt or unsupported source file.
+
+**Photos in the report have no auto-caption**
+→ The photo was rejected at sync-time analysis, usually because the original exceeded Anthropic vision's 5 MB cap. New photos will succeed (the resize fix in `analysePhoto.ts` handles this). To recover old photos, run the backfill script — see [Section 19](#19-maintenance-scripts).
 
 **`pm_roster` does not exist error when running migration 00004**
 → Migration 00004 depends on 00002. Run 00002 first, then 00004.

@@ -24,6 +24,8 @@ Thumbs.db
 .vscode/
 *.suo
 *.user
+.idea/
+app/android/.idea/
 
 # Local binaries and scratch files
 cloudflared.exe

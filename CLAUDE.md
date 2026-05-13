@@ -194,9 +194,12 @@ ash-inspection-app/
 │   │   ├── reportGenerator.ts        # Builds the Word document (docx library)
 │   │   ├── email.ts                  # Sends report via Resend
 │   │   ├── pdf.ts                    # DOCX → PDF via LibreOffice CLI
+│   │   ├── imageProcessor.ts         # sharp-based photo resize for vision + DOCX embed
 │   │   ├── weather.ts                # Geocode + Open-Meteo historical weather lookup
 │   │   ├── anthropic.ts              # Opus image analysis wrapper
 │   │   └── supabase.ts               # Supabase client (service role key)
+│   ├── scripts/
+│   │   └── backfill-photo-analysis.ts # One-shot backfill for photos with NULL opus_description
 │   ├── prompts/
 │   │   ├── classify.ts               # System prompt for section classification
 │   │   ├── analyseImage.ts           # System prompt for Opus photo analysis
@@ -288,7 +291,7 @@ POST `/api/generate-report` with `{ inspection_id }`
 3. Find most recent previous inspection; ask Sonnet which previous actions are still outstanding → "Recurring Items" table
 4. **Concurrently:** generate overall summary (Sonnet) + fetch weather (Open-Meteo)
 5. Compute projected next inspection (inspection date + 1 calendar month)
-6. Download all photos from Supabase Storage; run late Opus analysis on any photo that was missed during sync
+6. Download all photos from Supabase Storage; **resize each via `services/imageProcessor.ts`** (max 2048 px, JPEG q82) before either embedding in the DOCX or sending to Opus; run late Opus analysis on any photo that was missed during sync
 7. Build Word document (`server/services/reportGenerator.ts`)
 8. Upload `report.docx` to Supabase Storage
 9. Update inspection `status → 'report_generated'`
@@ -501,6 +504,30 @@ The `docx` library v9+ uses: `new BookmarkStart(name: string, id: number)` — n
 
 **Word requires Ctrl+Click for internal hyperlinks**  
 This is standard Word behaviour, not a bug. In PDF (LibreOffice-converted), single-click works correctly.
+
+### Image sizing — vision API and email caps (May 2026)
+
+Two hard limits caught us in production with a newly-registered inspector whose phone produced larger JPEGs than the existing inspectors':
+
+- **Anthropic vision: 5 MB base64 per image.** Photos over 5 MB are rejected with `image exceeds 5 MB maximum`. The error is fatal for that one image only, not the whole request, but it means no `opus_description` is ever stored.
+- **Resend: 40 MB total per email (content + all attachments).** When raw 5–7 MB photos get embedded into the DOCX and we also attach a PDF copy, modern phone cameras blow past this cap on properties with 20+ photos. Resend returns `validation_error: Email content and attachment exceeded the size limit (40MB)` and the report email never sends.
+
+**Mitigation:** `server/services/imageProcessor.ts` exposes `resizeForReport(buffer)` — sharp, max 2048 px on the longest edge, JPEG quality 82, EXIF-aware rotation. A 6 MB phone photo comes out around 400–800 KB. Applied in two places:
+
+- `routes/analysePhoto.ts` — resize before sending to Anthropic vision (the per-photo auto-caption call at sync time)
+- `routes/generateReport.ts` — resize immediately after Supabase download, then reuse the resized buffer for both late Opus analysis and DOCX embedding
+
+If the resize itself throws (e.g. a non-image file slipped through), we fall back to the raw buffer with a `[REPORT] Resize failed` warning — better to risk one oversized photo than abort the whole report.
+
+**Backfilling old photos:** photos that failed vision at capture time keep `opus_description = NULL` forever — late analysis only fires during a report generation. `server/scripts/backfill-photo-analysis.ts` is a standalone Node script that pulls every photo with a NULL description, resizes it, runs Opus, and saves the result. Usage:
+
+```
+cd server
+npm run backfill-photos -- <inspection_id>     # one inspection
+npm run backfill-photos -- --all                # every photo with NULL across the DB
+```
+
+Runs locally against production Supabase via the service-role key in `server/.env`. Costs ~$0.05/photo (one Opus call each).
 
 ### Weather API (server/services/weather.ts)
 
