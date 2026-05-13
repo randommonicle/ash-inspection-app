@@ -519,6 +519,16 @@ Two hard limits caught us in production with a newly-registered inspector whose 
 
 If the resize itself throws (e.g. a non-image file slipped through), we fall back to the raw buffer with a `[REPORT] Resize failed` warning — better to risk one oversized photo than abort the whole report.
 
+**Click-to-enlarge photo links** *(flagged, off by default)*  
+`ENABLE_PHOTO_HYPERLINKS=true` in Railway Variables turns on per-photo hyperlinks in the report. Each photo gets a 10-year Supabase signed URL, wrapped around the ImageRun in the DOCX/PDF. Tapping a photo in the PDF opens the full-res image in a browser.
+
+Reasons it's off by default:
+- **Link rot on key rotation** — rotating `SUPABASE_SERVICE_KEY` invalidates every signed URL in every previously-sent report. There's no fix short of re-sending all old reports.
+- **Archival dependency** — reports have a 6+ year legal lifespan. Embedded images survive forever; signed URLs depend on Supabase staying alive at the same project.
+- **PDF zoom already works** — source photos are 2048 px; pinching/scrolling in Acrobat or any PDF viewer gives ~6× sharp zoom without leaving the document.
+
+Turn on only if specific feedback calls out "I want to click photos for detail" (rather than the cosmetic "stretched" / "low-res" feedback, which was actually the 4:3 hardcode bug fixed in May 2026).
+
 **Backfilling old photos:** photos that failed vision at capture time keep `opus_description = NULL` forever — late analysis only fires during a report generation. `server/scripts/backfill-photo-analysis.ts` is a standalone Node script that pulls every photo with a NULL description, resizes it, runs Opus, and saves the result. Usage:
 
 ```

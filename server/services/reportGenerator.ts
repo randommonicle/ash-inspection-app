@@ -2,7 +2,7 @@ import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   HeadingLevel, AlignmentType, BorderStyle, WidthType, ShadingType,
   ImageRun, PageBreak, Header, Footer, PageNumber, TabStopType,
-  BookmarkStart, BookmarkEnd, InternalHyperlink,
+  BookmarkStart, BookmarkEnd, InternalHyperlink, ExternalHyperlink,
 } from 'docx'
 
 // ── Colour palette (matches ASH template exactly) ────────────────────────────
@@ -94,6 +94,10 @@ export interface ReportPhoto {
   // to the raw buffer — in that case the grid uses a sensible default ratio.
   imageWidth:  number | null
   imageHeight: number | null
+  // Signed URL to the full-res image in Supabase Storage. Populated only when
+  // ENABLE_PHOTO_HYPERLINKS=true. When present, each photo in the report
+  // becomes a click-to-open link to the full-res copy.
+  hiResUrl?:   string | null
 }
 
 export interface RecurringItem {
@@ -358,18 +362,22 @@ function photoGrid(sectionLabel: string, photos: ReportPhoto[]): (Table | Paragr
       const imgH = Math.round(imgW * aspect)
 
       try {
+        const imageRun = new ImageRun({
+          type: 'jpg',
+          data: photo.imageBuffer!,
+          transformation: { width: imgW, height: imgH },
+          altText: { title: caption, description: caption, name: photo.id },
+        })
+        // If a signed full-res URL is available, wrap the image in an external
+        // hyperlink so tapping it in the PDF opens the full image in a browser.
+        const child = photo.hiResUrl
+          ? new ExternalHyperlink({ link: photo.hiResUrl, children: [imageRun] })
+          : imageRun
         children.push(
           new Paragraph({
             alignment: AlignmentType.CENTER,
             spacing: { before: 60, after: 40 },
-            children: [
-              new ImageRun({
-                type: 'jpg',
-                data: photo.imageBuffer!,
-                transformation: { width: imgW, height: imgH },
-                altText: { title: caption, description: caption, name: photo.id },
-              }),
-            ],
+            children: [child],
           }),
         )
       } catch {
@@ -693,14 +701,18 @@ function buildPhotoAppendix(
         const imgH    = Math.round(imgW * aspect)
         const kids: Paragraph[] = []
         try {
+          const imageRun = new ImageRun({
+            type: 'jpg', data: photo.imageBuffer!,
+            transformation: { width: imgW, height: imgH },
+            altText: { title: caption, description: caption, name: photo.id },
+          })
+          const child = photo.hiResUrl
+            ? new ExternalHyperlink({ link: photo.hiResUrl, children: [imageRun] })
+            : imageRun
           kids.push(new Paragraph({
             alignment: AlignmentType.CENTER,
             spacing: { before: 40, after: 30 },
-            children: [new ImageRun({
-              type: 'jpg', data: photo.imageBuffer!,
-              transformation: { width: imgW, height: imgH },
-              altText: { title: caption, description: caption, name: photo.id },
-            })],
+            children: [child],
           }))
         } catch {
           kids.push(new Paragraph({

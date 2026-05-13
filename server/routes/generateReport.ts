@@ -382,10 +382,19 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
 
     const reportPhotos: ReportPhoto[] = []
 
+    // Feature flag: ENABLE_PHOTO_HYPERLINKS — when "true", each photo in the
+    // report is wrapped in a signed Supabase URL so tapping it in the PDF
+    // opens the full-res image. Off by default. Toggle via Railway Variables
+    // without redeploying. See CLAUDE.md "Click-to-enlarge photo links" for
+    // the trade-offs (link rot on service-key rotation, archival concerns).
+    const photoHyperlinksEnabled = process.env.ENABLE_PHOTO_HYPERLINKS === 'true'
+    const HI_RES_URL_TTL_SECONDS = 10 * 365 * 24 * 60 * 60 // ~10 years
+
     for (const photo of (rawPhotos ?? [])) {
       let imageBuffer: Buffer | null = null
       let imageWidth:  number | null = null
       let imageHeight: number | null = null
+      let hiResUrl:    string | null = null
 
       if (photo.storage_path) {
         try {
@@ -414,6 +423,24 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
         } catch (err) {
           console.warn(`[REPORT] Photo ${photo.id} download error:`, err)
         }
+
+        // Generate a long-lived signed URL for click-to-enlarge, only when
+        // the feature flag is enabled. Done after download so a 404'd storage
+        // path doesn't produce a dead link in the report.
+        if (photoHyperlinksEnabled && imageBuffer) {
+          try {
+            const { data: signed, error: signErr } = await supabase.storage
+              .from('inspection-files')
+              .createSignedUrl(photo.storage_path, HI_RES_URL_TTL_SECONDS)
+            if (signErr) {
+              console.warn(`[REPORT] Photo ${photo.id} signed URL failed:`, signErr.message)
+            } else if (signed?.signedUrl) {
+              hiResUrl = signed.signedUrl
+            }
+          } catch (err) {
+            console.warn(`[REPORT] Photo ${photo.id} signed URL error:`, err)
+          }
+        }
       }
 
       let opusDescription = photo.opus_description ?? null
@@ -438,6 +465,7 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
         imageBuffer,
         imageWidth,
         imageHeight,
+        hiResUrl,
       })
     }
 
