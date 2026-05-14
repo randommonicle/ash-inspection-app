@@ -4,7 +4,40 @@
 
 ---
 
-## 0. Outstanding from 2026-05-13 evening
+## 0. Outstanding
+
+### ⚠️ 0-TOP. `npm install` is broken in `app/` — blocks ALL APK builds
+
+Discovered 2026-05-14. `@sentry/react@^10.43.0` (added in a home-machine commit) has a postinstall guard that **aborts the entire `npm install`** in `app/` unless installed its specific way:
+
+```
+npm install --save-exact @sentry/react@10.43.0 --update-sentry-capacitor
+```
+
+Until this is resolved, `npm ci` / `npm install` / `npm run build` all fail in `app/` — **so no APK can be built.** This is now on the critical path because the photo-loss fix (0-NEXT below) is app-side and needs an APK to reach Nick and Pete. Fix this FIRST. `@capacitor/browser` is also declared-but-not-installed and will land once `npm install` succeeds.
+
+### ⚠️ 0-NEXT. Photo-loss fix is committed but not yet shipped
+
+Commit `fae4a7c` fixes the flaky-signal photo-loss bug (see "What happened" below). Four of the five files are app-side — they need an **APK release** to reach inspectors. The server-side `index.ts` change is already live on Railway. **Until the APK ships, the photo-loss bug can still recur.** Interim guidance given to Nick/Pete: after generating a report, open it and confirm the photos are actually in it before trusting it.
+
+**What happened (2026-05-14):** Nick did an inspection on flaky signal. Photo uploads failed mid-sync; the inspection was still marked synced; the report generated without photos; `freeLocalPhotos` then deleted the only remaining copies off his phone. Photos for inspection `4db421da-8e8f-416e-aef7-8d837c17493c` are **unrecoverable** — never reached Storage, gone from the phone.
+
+**The fix (commit `fae4a7c`):** `markPhotoSynced()` flag now maintained; `sync.ts` only marks an inspection synced if every photo uploaded; `freeLocalPhotos` verifies each photo against Supabase before deleting and keeps anything unconfirmed; `index.ts` logs client-disconnect quietly.
+
+### ⚠️ 0-AUDIO. Pending-transcription retry is fragile — audio can be silently lost
+
+Discovered 2026-05-14, same inspection. Nick's report was also **missing audio observations** — flaky signal caused some `/api/transcribe` calls to fail mid-upload.
+
+**Good news — likely recoverable.** Unlike photos, audio IS saved to disk before transcription, and the failure path correctly keeps it + creates a `pending_transcriptions` row ([ActiveInspectionScreen.tsx:262-266](app/src/screens/ActiveInspectionScreen.tsx)). Nothing deletes orphaned audio. So Nick's lost audio is **probably still on his phone** as `audio_*.webm` files in `Directory.Documents`, with matching `pending_transcriptions` rows in local SQLite. **Tell Nick not to clear app storage or reinstall.**
+
+**The bug:** `retryPendingTranscriptions` is only triggered by the `online` false→true edge effect, and that effect lives on `ActiveInspectionScreen`. Once the inspection is completed and the PM leaves the screen, the retry never fires again — the pending audio is orphaned. There's also no gate stopping report generation while transcriptions are pending (same shape as the photo bug).
+
+**Fix at home:**
+1. Make retry robust — fire on screen mount when online (not just the false→true edge), and/or run it from a global place not bound to the inspection screen.
+2. Gate inspection completion / report generation on zero pending transcriptions (mirror the photo-sync fix).
+3. Recovery for Nick's current orphaned audio — get him to reopen that inspection while on good signal, or add a manual "retry pending transcriptions" button. Verify the `pending_transcriptions` table + `audio_*.webm` files are still present on his device first.
+
+**Effort:** ~half a day including the recovery path.
 
 ### 0a. In-app updater hangs at 100% download
 
