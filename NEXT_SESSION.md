@@ -40,6 +40,14 @@ Full breakdown in `audit/ASH_Inspection_App_Audit_Report.docx` and memory file `
 
 Don't tackle these in a bug-squash session — they want their own focused chunk of work.
 
+### 0c. Admin dashboard — remove vestigial `report_pdf_url`
+
+The PDF report copy was dropped on 2026-05-14 (commit `ac86bf8`). `server/routes/admin.ts` still queries a `report_pdf_url` column and renders a "PDF" link in the Recent Inspections table — but that column was **never written** (only `report_docx_url` is set), so the link has always shown "—". Harmless, but tidy it up next time the dashboard is touched: drop `report_pdf_url` from the `/api/inspections/recent` select and remove the `pdfLink` block from `loadRecent()`. Low priority, cosmetic.
+
+### 0d. Photo-volume protection (design decision pending — see below)
+
+Even after the resize + HTML-dedup + PDF-removal fixes, a photo-only inspection of a very large site could still produce an email over Resend's 40 MB cap. Options under consideration: adaptive compression (scale quality/dimensions to a total budget), a Supabase Storage download-link fallback for oversized reports, a soft in-app photo counter, and/or a high server-side sanity cap. Decision was being discussed with Ben on 2026-05-14 — check the conversation or ask him which approach was chosen before implementing.
+
 ---
 
 ## (Original notes below — most items shipped on 2026-05-13)
