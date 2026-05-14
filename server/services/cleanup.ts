@@ -17,12 +17,16 @@ async function deleteOldPhotos(): Promise<void> {
 
   console.log(`[CLEANUP] Starting photo retention pass — deleting Storage files for inspections before ${cutoffISO}`)
 
-  // Find all inspections older than the retention window
+  // Find all inspections older than the retention window. Must include both
+  // 'completed' and 'report_generated' — once a report is generated the status
+  // flips to 'report_generated', so filtering on 'completed' alone would miss
+  // every inspection that actually produced a report (i.e. all the ones that
+  // hold the bulky photos + report.docx + report.html worth cleaning up).
   const { data: inspections, error } = await supabase
     .from('inspections')
     .select('id, property_id, end_time')
     .lt('end_time', cutoffISO)
-    .eq('status', 'completed')
+    .in('status', ['completed', 'report_generated'])
 
   if (error) {
     console.error('[CLEANUP] Failed to query old inspections:', error.message)
