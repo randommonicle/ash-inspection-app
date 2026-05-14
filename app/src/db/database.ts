@@ -306,6 +306,15 @@ export async function deletePhotosForInspection(inspection_id: string): Promise<
   await getDB().run(`DELETE FROM photos WHERE inspection_id=?`, [inspection_id])
 }
 
+// Mark a single photo as confirmed-uploaded to Supabase. The sync service calls
+// this only after BOTH the Storage upload and the photos-table upsert have
+// succeeded. This per-photo flag is what freeLocalPhotos checks before it is
+// allowed to delete a local file — so a photo that never reached the cloud can
+// never be destroyed on the phone.
+export async function markPhotoSynced(id: string): Promise<void> {
+  await getDB().run(`UPDATE photos SET synced=1 WHERE id=?`, [id])
+}
+
 export async function updatePhotoAnalysis(id: string, caption: string, sectionKey?: string): Promise<void> {
   await getDB().run(`UPDATE photos SET caption=?, section_key=? WHERE id=?`, [caption, sectionKey ?? null, id])
 }

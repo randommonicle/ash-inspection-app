@@ -23,6 +23,7 @@ import {
   getObservationsForInspection,
   getPhotosForInspection,
   markInspectionSynced,
+  markPhotoSynced,
   updatePhotoAnalysis,
 } from '../db/database'
 import type { LocalInspection } from '../types'
@@ -118,9 +119,18 @@ async function syncInspection(inspection: LocalInspection): Promise<void> {
   const photos = await getPhotosForInspection(inspection.id)
   console.log(`[SYNC] Syncing ${photos.length} photos`)
 
+  // Count photos that failed to reach Supabase. A single failure must block
+  // markInspectionSynced below — otherwise the inspection shows as fully synced,
+  // the "Generate Report" button appears, the report generates without the
+  // missing photos, and freeLocalPhotos then deletes the only remaining copies
+  // off the phone. That exact chain lost an inspection's photos in May 2026.
+  let failedPhotos = 0
+
   for (const photo of photos) {
+    const storagePath = `${inspection.property_id}/${inspection.id}/${photo.id}.jpg`
+
+    // ── Upload + DB row — this is what "synced" means. A failure here counts. ──
     try {
-      const storagePath = `${inspection.property_id}/${inspection.id}/${photo.id}.jpg`
       console.log(`[SYNC] Uploading photo ${photo.id} → ${storagePath}`)
 
       // Filesystem.readFile accepts file:// URIs on Android directly
@@ -132,7 +142,6 @@ async function syncInspection(inspection: LocalInspection): Promise<void> {
         .upload(storagePath, blob, { contentType: 'image/jpeg', upsert: true })
 
       if (uploadErr) {
-        console.error(`[SYNC] Storage upload failed for photo ${photo.id}:`, uploadErr.message)
         throw new Error(`Storage upload: ${uploadErr.message}`)
       }
 
@@ -147,18 +156,41 @@ async function syncInspection(inspection: LocalInspection): Promise<void> {
       }, { onConflict: 'id' })
 
       if (photoErr) {
-        console.error(`[SYNC] Photo record upsert failed for ${photo.id}:`, photoErr.message)
         throw new Error(`Photo record upsert: ${photoErr.message}`)
       }
 
-      // Trigger Opus image analysis server-side after successful upload
-      await triggerOpusAnalysis(photo.id, storagePath)
-
-      console.log(`[SYNC] Photo ${photo.id} synced successfully`)
+      // Both the Storage upload and the DB row are now confirmed. Record that
+      // locally — freeLocalPhotos uses this flag (and a remote re-check) before
+      // it is ever allowed to delete the on-device copy.
+      await markPhotoSynced(photo.id)
+      console.log(`[SYNC] Photo ${photo.id} uploaded and recorded`)
     } catch (err) {
-      // Log per-photo failure but continue syncing remaining photos
-      console.error(`[SYNC] Photo ${photo.id} sync failed — skipping:`, err instanceof Error ? err.message : err)
+      // Per-photo failure: log, count it, and continue with the remaining
+      // photos — but the count below will stop the inspection being marked
+      // synced, so the next sync pass retries this photo.
+      failedPhotos++
+      console.error(`[SYNC] Photo ${photo.id} upload failed — will retry next pass:`, err instanceof Error ? err.message : err)
+      continue
     }
+
+    // ── Opus image analysis — best-effort, NON-fatal. ─────────────────────────
+    // A failure here does NOT count as a sync failure: the photo's data is
+    // safely in Supabase, only the auto-caption is missing, and the report
+    // pipeline's late-analysis step regenerates it. Counting it would wrongly
+    // block markInspectionSynced for a photo that actually uploaded fine.
+    try {
+      await triggerOpusAnalysis(photo.id, storagePath)
+    } catch (err) {
+      console.warn(`[SYNC] Opus analysis failed for ${photo.id} (non-fatal):`, err instanceof Error ? err.message : err)
+    }
+  }
+
+  // Only mark the whole inspection synced if EVERY photo reached Supabase.
+  // If any failed, leave synced=0 — the next sync pass retries, and the
+  // "Generate Report" button stays hidden until the photos are genuinely up.
+  if (failedPhotos > 0) {
+    console.warn(`[SYNC] Inspection ${inspection.id} — ${failedPhotos}/${photos.length} photo(s) failed to upload; NOT marking synced, will retry next pass`)
+    return
   }
 
   await markInspectionSynced(inspection.id)

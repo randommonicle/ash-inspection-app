@@ -149,12 +149,14 @@ export function PropertyDetailScreen() {
       // Persist report_sent to SQLite so "Regenerate" label survives logout/re-login
       await markReportSent(inspectionId)
       setInspections(prev => prev.map(i => i.id === inspectionId ? { ...i, report_sent: true } : i))
-      // Reclaim phone storage — photos are already in Supabase Storage and the
-      // server pulls from there for any future regeneration. Failures are
-      // silently ignored; the report has already been sent successfully.
+      // Reclaim phone storage — but freeLocalPhotos only deletes photos it can
+      // confirm are in Supabase; any it can't verify are kept on the phone.
+      // Failures are silently ignored; the report has already been sent.
       try {
-        const { deleted, freedBytes } = await freeLocalPhotos(inspectionId)
-        if (deleted > 0) {
+        const { deleted, freedBytes, kept } = await freeLocalPhotos(inspectionId)
+        if (kept > 0) {
+          setCleanupMsg(prev => ({ ...prev, [inspectionId]: `${deleted} photo(s) archived — ${kept} kept on device (not yet confirmed in cloud)` }))
+        } else if (deleted > 0) {
           setCleanupMsg(prev => ({ ...prev, [inspectionId]: `Photos archived to cloud — ${formatFreedBytes(freedBytes)} freed` }))
         }
       } catch (cleanupErr) {

@@ -67,7 +67,24 @@ app.use('/api/generate-report', generateReportRouter)
 app.use('/admin', adminRouter)
 
 // Catch-all error handler — prevents unhandled errors returning raw stack traces to the client
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+app.use((err: Error & { type?: string; code?: string }, _req: Request, res: Response, _next: NextFunction) => {
+  // Client disconnected mid-request (flaky mobile signal) — raw-body throws
+  // "request aborted". There's nothing the server can do and nothing to alert
+  // on; log it quietly so it doesn't bury genuine errors in the logs.
+  const isClientDisconnect =
+    err.type === 'request.aborted' ||
+    err.code === 'ECONNABORTED' ||
+    err.message === 'request aborted'
+
+  if (isClientDisconnect) {
+    console.warn('[CLIENT DISCONNECT] request aborted before the body was fully received')
+    // The socket is usually already gone — only respond if it's still writable.
+    if (!res.headersSent && res.writable) {
+      res.status(400).json({ error: 'Request aborted' })
+    }
+    return
+  }
+
   console.error('[UNHANDLED ERROR]', err.message, err.stack)
   res.status(500).json({ error: 'Internal server error' })
 })
