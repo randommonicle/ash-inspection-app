@@ -1,15 +1,9 @@
 FROM node:20-bullseye-slim
 
-# Retry apt-get up to 3 times to handle transient mirror connection resets.
-# --fix-missing tells apt to retry failed package downloads rather than abort.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends --fix-missing \
-        libreoffice \
-        fonts-liberation \
-    || (apt-get update && apt-get install -y --no-install-recommends --fix-missing \
-        libreoffice \
-        fonts-liberation) \
-    && rm -rf /var/lib/apt/lists/*
+# No system packages required. LibreOffice was previously installed here to
+# convert the report DOCX to PDF; the PDF copy was dropped May 2026 (the
+# interactive HTML copy replaces it and prints to PDF in one click), so the
+# heavy apt install is gone — Docker builds are now substantially faster.
 
 WORKDIR /app
 

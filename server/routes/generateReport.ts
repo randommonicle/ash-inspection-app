@@ -7,7 +7,6 @@ import { GENERATE_SUMMARY_PROMPT } from '../prompts/generateSummary'
 import { buildReportDocx, type ReportObservation, type ReportPhoto, type RecurringItem } from '../services/reportGenerator'
 import { buildReportHtml } from '../services/htmlReportGenerator'
 import { sendReportEmail } from '../services/email'
-import { convertDocxToPdf } from '../services/pdf'
 import { resizeForReport } from '../services/imageProcessor'
 import { getWeatherForInspection } from '../services/weather'
 import { requireAuth } from '../middleware/auth'
@@ -783,13 +782,13 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
       report_docx_url: storagePath,
     }).eq('id', inspection_id)
 
-    // ── 9. Convert to PDF (LibreOffice) ──────────────────────────────────────
-    currentStage = 'convert_pdf'
-    const baseFilename = `ASH_Inspection_${propertyRef}_${inspectionDate.replace(/\s/g, '_')}`
-    const pdfBuffer = await convertDocxToPdf(docxBuffer, baseFilename)
-
-    // ── 10. Send email ────────────────────────────────────────────────────────
+    // ── 9. Send email ─────────────────────────────────────────────────────────
+    // The report is emailed as a DOCX (canonical editable copy) plus a
+    // self-contained interactive HTML copy. The PDF was dropped May 2026 — it
+    // was redundant with the HTML (which prints to PDF in one click) and its
+    // photo payload pushed large inspections past Resend's 40 MB cap.
     currentStage = 'send_email'
+    const baseFilename = `ASH_Inspection_${propertyRef}_${inspectionDate.replace(/\s/g, '_')}`
     if (process.env.RESEND_API_KEY) {
       await sendReportEmail({
         to:             inspectorEmail,
@@ -799,7 +798,6 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
         inspectionDate,
         docxBuffer,
         filename:  baseFilename,
-        pdfBuffer,
         htmlBuffer,
       })
     } else {

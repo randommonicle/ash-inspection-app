@@ -43,9 +43,9 @@ export const photoAnalysisLimiter = rateLimit({
 
 /**
  * Generate report — the most expensive endpoint (multiple Anthropic calls,
- * LibreOffice PDF conversion, Resend email). 10 per hour per IP is
- * generous for legitimate use (a PM won't regenerate 10 reports in an hour)
- * but caps runaway cost exposure.
+ * DOCX + HTML rendering, Resend email). 10 per hour per IP is generous for
+ * legitimate use (a PM won't regenerate 10 reports in an hour) but caps
+ * runaway cost exposure.
  */
 export const reportLimiter = rateLimit({
   windowMs:      60 * 60 * 1000,
