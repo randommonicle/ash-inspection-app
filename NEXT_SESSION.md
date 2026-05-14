@@ -34,8 +34,11 @@ Discovered 2026-05-14, same inspection. Nick's report was also **missing audio o
 
 **Fix at home:**
 1. Make retry robust — fire on screen mount when online (not just the false→true edge), and/or run it from a global place not bound to the inspection screen.
-2. Gate inspection completion / report generation on zero pending transcriptions (mirror the photo-sync fix).
-3. Recovery for Nick's current orphaned audio — get him to reopen that inspection while on good signal, or add a manual "retry pending transcriptions" button. Verify the `pending_transcriptions` table + `audio_*.webm` files are still present on his device first.
+2. **`retryPendingTranscriptions` must call `markInspectionUnsynced` after creating observations.** It currently calls `saveObservation` (local SQLite only). The inspection is already `synced=1`, and the sync service only processes `synced=0` inspections — so without this, freshly-transcribed observations never upload to Supabase and a regenerate will never see them. This is the load-bearing detail of the whole recovery.
+3. Gate inspection completion / report generation on zero pending transcriptions (mirror the photo-sync fix).
+4. Recovery for Nick's current orphaned audio — confirmed his `audio_*.webm` files + `pending_transcriptions` rows are still on the device. Once the fixed APK is on his phone: reopen that inspection on good signal so retry fires → audio transcribes → observations created + inspection marked unsynced → next sync uploads them → then regenerate the report. A manual "retry pending transcriptions" button would make this reliable rather than dependent on effect timing.
+
+**The full recovery sequence for Nick (after the fix ships):** fixed APK installed → pending audio transcribes → observations sync to Supabase → *then* regenerate. "Regenerate" on its own does nothing — it only re-reads what's already in Supabase.
 
 **Effort:** ~half a day including the recovery path.
 
