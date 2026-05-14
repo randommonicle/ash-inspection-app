@@ -28,19 +28,27 @@ Commit `fae4a7c` fixes the flaky-signal photo-loss bug (see "What happened" belo
 
 Discovered 2026-05-14, same inspection. Nick's report was also **missing audio observations** — flaky signal caused some `/api/transcribe` calls to fail mid-upload.
 
-**Good news — likely recoverable.** Unlike photos, audio IS saved to disk before transcription, and the failure path correctly keeps it + creates a `pending_transcriptions` row ([ActiveInspectionScreen.tsx:262-266](app/src/screens/ActiveInspectionScreen.tsx)). Nothing deletes orphaned audio. So Nick's lost audio is **probably still on his phone** as `audio_*.webm` files in `Directory.Documents`, with matching `pending_transcriptions` rows in local SQLite. **Tell Nick not to clear app storage or reinstall.**
+**Status — recoverable, but orphaned.** Confirmed 2026-05-14: the `audio_*.webm` files ARE still on Nick's phone in `Directory.Documents`, but there are **no `pending_transcriptions` rows** for them (the inspection screen loads `pendingCount` straight from that table on mount at [ActiveInspectionScreen.tsx:96](app/src/screens/ActiveInspectionScreen.tsx) — it showed nothing queued). The audio bytes — the irreplaceable part — exist; the bookkeeping that the retry mechanism depends on does not. **Tell Nick not to clear app storage or reinstall.**
 
-**The bug:** `retryPendingTranscriptions` is only triggered by the `online` false→true edge effect, and that effect lives on `ActiveInspectionScreen`. Once the inspection is completed and the PM leaves the screen, the retry never fires again — the pending audio is orphaned. There's also no gate stopping report generation while transcriptions are pending (same shape as the photo bug).
+**Root cause — the deep bug.** The `pending_transcriptions` row is only created in the `catch` block of `handleRecordingComplete` ([line ~263](app/src/screens/ActiveInspectionScreen.tsx)). The audio file is written to disk *first* (line ~194), then transcription is attempted. If the app process is killed between the file write and the catch/finally running — transcription in-flight on slow 4G, app backgrounded or killed by Android — the file exists but the row was never created and `finally` never ran to clean up. Result: orphaned audio file, invisible to the retry mechanism.
+
+**Secondary bug.** `retryPendingTranscriptions` is only triggered by the `online` false→true edge effect, which lives on `ActiveInspectionScreen` — once the PM leaves the screen it never fires again. And there's no gate stopping report generation while transcriptions are pending (same shape as the photo bug).
 
 **Fix at home:**
-1. Make retry robust — fire on screen mount when online (not just the false→true edge), and/or run it from a global place not bound to the inspection screen.
-2. **`retryPendingTranscriptions` must call `markInspectionUnsynced` after creating observations.** It currently calls `saveObservation` (local SQLite only). The inspection is already `synced=1`, and the sync service only processes `synced=0` inspections — so without this, freshly-transcribed observations never upload to Supabase and a regenerate will never see them. This is the load-bearing detail of the whole recovery.
-3. Gate inspection completion / report generation on zero pending transcriptions (mirror the photo-sync fix).
-4. Recovery for Nick's current orphaned audio — confirmed his `audio_*.webm` files + `pending_transcriptions` rows are still on the device. Once the fixed APK is on his phone: reopen that inspection on good signal so retry fires → audio transcribes → observations created + inspection marked unsynced → next sync uploads them → then regenerate the report. A manual "retry pending transcriptions" button would make this reliable rather than dependent on effect timing.
+1. **Create the `pending_transcriptions` row BEFORE attempting transcription**, not in the catch block: write file → create row → try transcribe → on success `deletePendingTranscription` + delete file, on failure leave both. Then a file can never exist without a row regardless of when the app dies. This also removes the `keepAudio` flag dance entirely.
+2. Make retry robust — fire on screen mount when online (not just the false→true edge), and/or run it from a global place not bound to the inspection screen.
+3. **`retryPendingTranscriptions` must call `markInspectionUnsynced` after creating observations.** It currently calls `saveObservation` (local SQLite only). The inspection is already `synced=1`, and the sync service only processes `synced=0` inspections — so without this, freshly-transcribed observations never upload to Supabase and a regenerate will never see them. Load-bearing detail.
+4. Gate inspection completion / report generation on zero pending transcriptions (mirror the photo-sync fix).
 
-**The full recovery sequence for Nick (after the fix ships):** fixed APK installed → pending audio transcribes → observations sync to Supabase → *then* regenerate. "Regenerate" on its own does nothing — it only re-reads what's already in Supabase.
+**Recovery for Nick's current orphaned audio** — bespoke one-off, because there are no `pending_transcriptions` rows for the retry mechanism to find:
+1. Scan `Directory.Documents` for `audio_*.webm` files. Filenames are `audio_{ms-timestamp}.webm` — they carry their own timestamp.
+2. Match timestamps to Nick's inspection window (`4db421da-8e8f-416e-aef7-8d837c17493c`, 14:31–14:45 on 14 May). If those are the only orphaned audio files on the device, they all belong to that inspection; timestamp order = recording order.
+3. For each: create a `pending_transcriptions` row pointing at it with the right `inspection_id` (then the fixed retry handles the rest), or transcribe directly → `saveObservation` → `markInspectionUnsynced`.
+4. Then: sync → regenerate. "Regenerate" on its own does nothing — it only re-reads what's already in Supabase.
 
-**Effort:** ~half a day including the recovery path.
+A throwaway debug screen or script that does steps 1–3 is probably the cleanest way to run the one-off recovery.
+
+**Effort:** ~half a day for the fix, plus ~half a day for the bespoke recovery routine.
 
 ### 0a. In-app updater hangs at 100% download
 
