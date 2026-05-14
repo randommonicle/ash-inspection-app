@@ -44,9 +44,16 @@ Don't tackle these in a bug-squash session — they want their own focused chunk
 
 The PDF report copy was dropped on 2026-05-14 (commit `ac86bf8`). `server/routes/admin.ts` still queries a `report_pdf_url` column and renders a "PDF" link in the Recent Inspections table — but that column was **never written** (only `report_docx_url` is set), so the link has always shown "—". Harmless, but tidy it up next time the dashboard is touched: drop `report_pdf_url` from the `/api/inspections/recent` select and remove the `pdfLink` block from `loadRecent()`. Low priority, cosmetic.
 
-### 0d. Photo-volume protection (design decision pending — see below)
+### 0d. Soft in-app photo counter (queued — needs the next APK release)
 
-Even after the resize + HTML-dedup + PDF-removal fixes, a photo-only inspection of a very large site could still produce an email over Resend's 40 MB cap. Options under consideration: adaptive compression (scale quality/dimensions to a total budget), a Supabase Storage download-link fallback for oversized reports, a soft in-app photo counter, and/or a high server-side sanity cap. Decision was being discussed with Ben on 2026-05-14 — check the conversation or ask him which approach was chosen before implementing.
+The server-side photo-volume protection is **done** (2026-05-14): adaptive compression by photo count (`resizeTier` in `generateReport.ts`) plus a Supabase Storage download-link fallback in `email.ts` for anything still over Resend's 40 MB cap. Reports now always send, no photo limit.
+
+Still to do — a **soft in-app photo counter** so PMs are aware when they're taking a lot of photos. Pure awareness, no blocking:
+- Show a running count somewhere on `ActiveInspectionScreen.tsx` (e.g. "47 photos" near the camera button or in the header).
+- Optional: gentle colour shift past ~50 (amber) so it reads as "you're taking a lot" without nagging.
+- No hard cap — decision was explicitly *not* to block PMs mid-inspection; the server handles any volume.
+
+App-side change, so it ships with the next APK release — bundle it with the camera-loop / Feedback-rename release if those haven't gone out yet.
 
 ---
 

@@ -7,7 +7,7 @@ import { GENERATE_SUMMARY_PROMPT } from '../prompts/generateSummary'
 import { buildReportDocx, type ReportObservation, type ReportPhoto, type RecurringItem } from '../services/reportGenerator'
 import { buildReportHtml } from '../services/htmlReportGenerator'
 import { sendReportEmail } from '../services/email'
-import { resizeForReport } from '../services/imageProcessor'
+import { resizeForReport, type ResizeOptions } from '../services/imageProcessor'
 import { getWeatherForInspection } from '../services/weather'
 import { requireAuth } from '../middleware/auth'
 import { reportLimiter } from '../middleware/rateLimits'
@@ -41,6 +41,20 @@ interface PropertyContext {
 interface LogCtx {
   inspectionId: string
   userId:       string
+}
+
+// Adaptive photo compression. The more photos in an inspection, the harder we
+// compress each one so the assembled report stays under Resend's 40 MB email
+// cap. A photo-only survey of a large site can run to 60+ photos; at the
+// default 2048 px/q82 that would blow the cap, so we step the longest-edge and
+// JPEG quality down by count. A 1280 px photo is still perfectly legible as an
+// inspection record. The storage-link fallback in email.ts catches anything
+// that's still too big after this.
+function resizeTier(photoCount: number): ResizeOptions {
+  if (photoCount <= 20) return { maxEdge: 2048, quality: 82 }
+  if (photoCount <= 40) return { maxEdge: 1600, quality: 78 }
+  if (photoCount <= 70) return { maxEdge: 1280, quality: 72 }
+  return { maxEdge: 1024, quality: 68 }
 }
 
 async function processObservation(obs: RawObservation, ctx: PropertyContext, logCtx: LogCtx): Promise<ProcessedResult> {
@@ -490,6 +504,12 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
 
     const reportPhotos: ReportPhoto[] = []
 
+    // Pick a compression tier from the photo count so a photo-heavy inspection
+    // stays under the email size cap. Logged so the cause of any quality drop
+    // is visible in the Railway logs.
+    const resizeOpts = resizeTier(rawPhotos?.length ?? 0)
+    console.log(`[REPORT] ${rawPhotos?.length ?? 0} photos — resize tier ${resizeOpts.maxEdge}px/q${resizeOpts.quality}`)
+
     // Feature flag: ENABLE_PHOTO_HYPERLINKS — when "true", each photo in the
     // report is wrapped in a signed Supabase URL so tapping it in the PDF
     // opens the full-res image. Off by default. Toggle via Railway Variables
@@ -516,9 +536,10 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
             const rawBuffer = Buffer.from(await fileData.arrayBuffer())
             // Resize once and reuse for both Opus analysis and DOCX embed. Modern
             // phone photos (>5 MB) get rejected by Anthropic vision and balloon
-            // the report past Resend's 40 MB cap if embedded raw.
+            // the report past Resend's 40 MB cap if embedded raw. resizeOpts is
+            // the count-based tier picked above.
             try {
-              const resized = await resizeForReport(rawBuffer)
+              const resized = await resizeForReport(rawBuffer, resizeOpts)
               imageBuffer = resized.buffer
               imageWidth  = resized.width
               imageHeight = resized.height
@@ -760,26 +781,65 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
       console.warn('[REPORT] HTML twin failed (non-fatal):', htmlErr instanceof Error ? htmlErr.message : htmlErr)
     }
 
-    // ── 8. Upload to Supabase Storage ─────────────────────────────────────────
+    // ── 8. Upload DOCX + HTML to Supabase Storage ─────────────────────────────
+    // Both formats are persisted so the email can fall back to a download link
+    // if the assembled attachments exceed Resend's 40 MB cap (photo-heavy
+    // inspections). The DOCX path is also recorded on the inspection row.
     currentStage = 'upload_docx'
-    const storagePath = `${inspection.property_id}/${inspection_id}/report.docx`
+    const docxStoragePath = `${inspection.property_id}/${inspection_id}/report.docx`
+    const htmlStoragePath = `${inspection.property_id}/${inspection_id}/report.html`
+
     const { error: uploadErr } = await supabase.storage
       .from('inspection-files')
-      .upload(storagePath, docxBuffer, {
+      .upload(docxStoragePath, docxBuffer, {
         contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         upsert: true,
       })
-
     if (uploadErr) {
-      console.error('[REPORT] Storage upload failed:', uploadErr.message)
+      console.error('[REPORT] DOCX storage upload failed:', uploadErr.message)
     } else {
-      console.log(`[REPORT] Report uploaded to ${storagePath}`)
+      console.log(`[REPORT] DOCX uploaded to ${docxStoragePath}`)
     }
 
-    // ── 8. Update inspection status ───────────────────────────────────────────
+    let htmlUploaded = false
+    if (htmlBuffer) {
+      const { error: htmlUploadErr } = await supabase.storage
+        .from('inspection-files')
+        .upload(htmlStoragePath, htmlBuffer, {
+          contentType: 'text/html',
+          upsert: true,
+        })
+      if (htmlUploadErr) {
+        console.error('[REPORT] HTML storage upload failed:', htmlUploadErr.message)
+      } else {
+        htmlUploaded = true
+        console.log(`[REPORT] HTML uploaded to ${htmlStoragePath}`)
+      }
+    }
+
+    // Signed download URLs — used only as the email's link fallback when the
+    // attachments are over the size cap. 1-year expiry: comfortably longer than
+    // any report email stays actionable, and a stale link just means regenerate.
+    const DOWNLOAD_URL_TTL_SECONDS = 365 * 24 * 60 * 60
+    let docxDownloadUrl: string | null = null
+    let htmlDownloadUrl: string | null = null
+    if (!uploadErr) {
+      const { data: signed } = await supabase.storage
+        .from('inspection-files')
+        .createSignedUrl(docxStoragePath, DOWNLOAD_URL_TTL_SECONDS)
+      docxDownloadUrl = signed?.signedUrl ?? null
+    }
+    if (htmlUploaded) {
+      const { data: signed } = await supabase.storage
+        .from('inspection-files')
+        .createSignedUrl(htmlStoragePath, DOWNLOAD_URL_TTL_SECONDS)
+      htmlDownloadUrl = signed?.signedUrl ?? null
+    }
+
+    // ── 8b. Update inspection status ──────────────────────────────────────────
     await supabase.from('inspections').update({
       status:          'report_generated',
-      report_docx_url: storagePath,
+      report_docx_url: docxStoragePath,
     }).eq('id', inspection_id)
 
     // ── 9. Send email ─────────────────────────────────────────────────────────
@@ -787,6 +847,8 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
     // self-contained interactive HTML copy. The PDF was dropped May 2026 — it
     // was redundant with the HTML (which prints to PDF in one click) and its
     // photo payload pushed large inspections past Resend's 40 MB cap.
+    // sendReportEmail attaches what fits and falls back to a download link for
+    // anything that doesn't, so the report is always delivered.
     currentStage = 'send_email'
     const baseFilename = `ASH_Inspection_${propertyRef}_${inspectionDate.replace(/\s/g, '_')}`
     if (process.env.RESEND_API_KEY) {
@@ -799,6 +861,8 @@ router.post('/', requireAuth, reportLimiter, async (req: Request, res: Response)
         docxBuffer,
         filename:  baseFilename,
         htmlBuffer,
+        docxDownloadUrl,
+        htmlDownloadUrl,
       })
     } else {
       console.warn('[REPORT] RESEND_API_KEY not set — skipping email send')

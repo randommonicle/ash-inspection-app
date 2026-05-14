@@ -9,8 +9,10 @@ export interface ReportEmailParams {
   propertyRef: string
   inspectionDate: string
   docxBuffer: Buffer
-  filename: string           // base filename without extension, e.g. "ASH_Inspection_B69_1_May_2026"
-  htmlBuffer?: Buffer | null // optional self-contained HTML report (click-to-enlarge via inline lightbox)
+  filename: string                  // base filename without extension, e.g. "ASH_Inspection_B69_1_May_2026"
+  htmlBuffer?: Buffer | null        // optional self-contained HTML report (click-to-enlarge via inline lightbox)
+  docxDownloadUrl?: string | null   // signed Storage URL — link fallback if the DOCX won't fit as an attachment
+  htmlDownloadUrl?: string | null   // signed Storage URL — link fallback if the HTML won't fit as an attachment
 }
 
 // Resend rejects any email whose content + attachments exceed 40 MB. We size
@@ -18,31 +20,57 @@ export interface ReportEmailParams {
 // keep headroom for the email body and MIME overhead.
 const MAX_ATTACHMENTS_B64 = 38 * 1024 * 1024
 
+interface Attachment { filename: string; content: string }
+
 export async function sendReportEmail(params: ReportEmailParams): Promise<void> {
-  const { to, inspectorName, propertyName, propertyRef, inspectionDate, docxBuffer, filename, htmlBuffer } = params
+  const {
+    to, inspectorName, propertyName, propertyRef, inspectionDate,
+    docxBuffer, filename, htmlBuffer, docxDownloadUrl, htmlDownloadUrl,
+  } = params
 
   console.log(`[EMAIL] Sending report to ${to} for ${propertyRef} — ${propertyName}`)
 
-  // The report is sent as a DOCX (canonical editable copy) plus an optional
-  // self-contained interactive HTML copy. The PDF was dropped May 2026 — it
-  // duplicated the HTML (which prints to PDF in one click) and its photo
-  // payload pushed large inspections past Resend's 40 MB cap.
-  //
-  // DOCX is never dropped. If the total still exceeds the cap (a very
-  // photo-heavy inspection), drop the HTML so the email always sends rather
-  // than hard-failing the whole report pipeline at the last stage.
+  // Greedily attach what fits under Resend's cap — DOCX first (the canonical
+  // editable copy), then the interactive HTML. Anything that doesn't fit is
+  // delivered as a Supabase Storage download link in the body instead. This
+  // guarantees the email always sends rather than hard-failing the whole
+  // report pipeline at the last stage on a photo-heavy inspection.
   const docxB64 = docxBuffer.toString('base64')
-  let   htmlB64 = htmlBuffer ? htmlBuffer.toString('base64') : null
+  const htmlB64 = htmlBuffer ? htmlBuffer.toString('base64') : null
 
-  let droppedHtml = false
-  if (htmlB64 && docxB64.length + htmlB64.length > MAX_ATTACHMENTS_B64) {
-    htmlB64 = null
-    droppedHtml = true
-    console.warn(`[EMAIL] Attachments exceeded ${Math.round(MAX_ATTACHMENTS_B64 / 1024 / 1024)} MB — dropped the HTML copy. DOCX always retained.`)
+  const attachments: Attachment[] = []
+  const linkLines:   string[]     = []
+  let usedB64 = 0
+
+  // DOCX — attach if it fits, otherwise fall back to a download link.
+  if (docxB64.length <= MAX_ATTACHMENTS_B64) {
+    attachments.push({ filename: `${filename}.docx`, content: docxB64 })
+    usedB64 += docxB64.length
+  } else if (docxDownloadUrl) {
+    linkLines.push(`<a href="${docxDownloadUrl}">Download the Word report (.docx)</a>`)
+    console.warn('[EMAIL] DOCX over size cap — delivered as a download link instead')
+  } else {
+    linkLines.push('The Word report was too large to attach and no download link is available — please regenerate the report or contact support.')
+    console.error('[EMAIL] DOCX over size cap and no download URL available')
   }
 
-  const droppedNote = droppedHtml
-    ? `<p style="color:#b54242;font-size:13px;">Note: this inspection had too many photos to attach the interactive HTML copy within the email size limit. The Word document is attached; the full report (including all photos) is also stored in the cloud and can be re-sent on request.</p>`
+  // HTML — attach if it fits in the remaining budget, otherwise download link.
+  if (htmlB64) {
+    if (usedB64 + htmlB64.length <= MAX_ATTACHMENTS_B64) {
+      attachments.push({ filename: `${filename}_INTERACTIVE.html`, content: htmlB64 })
+      usedB64 += htmlB64.length
+    } else if (htmlDownloadUrl) {
+      linkLines.push(`<a href="${htmlDownloadUrl}">Download the interactive HTML report</a>`)
+      console.warn('[EMAIL] HTML over remaining size budget — delivered as a download link instead')
+    } else {
+      console.warn('[EMAIL] HTML over size budget and no download URL — omitted from this email')
+    }
+  }
+
+  const htmlAttached = attachments.some(a => a.filename.endsWith('.html'))
+  const linkBlock = linkLines.length > 0
+    ? `<p style="color:#b54242;font-size:13px;">This inspection had a lot of photos, so ${linkLines.length > 1 ? 'some report copies are' : 'one report copy is'} provided as a secure download link rather than an attachment:</p>
+       <ul style="font-size:13px;">${linkLines.map(l => `<li>${l}</li>`).join('')}</ul>`
     : ''
 
   const { error } = await resend.emails.send({
@@ -51,27 +79,14 @@ export async function sendReportEmail(params: ReportEmailParams): Promise<void> 
     subject: `Inspection Report — ${propertyName} (${propertyRef}) — ${inspectionDate}`,
     html: `
       <p>Dear ${inspectorName},</p>
-      <p>Please find attached the property inspection report for <strong>${propertyName}</strong> (${propertyRef}), carried out on ${inspectionDate}.</p>
-      ${htmlB64 ? `<p style="color:#555;font-size:13px;">The HTML copy is interactive — tap any photo to enlarge. Download it from this email to view, as most email clients won't preview HTML attachments for security reasons.</p>` : ''}
-      ${droppedNote}
+      <p>Please find ${attachments.length > 0 ? 'attached' : 'below'} the property inspection report for <strong>${propertyName}</strong> (${propertyRef}), carried out on ${inspectionDate}.</p>
+      ${htmlAttached ? `<p style="color:#555;font-size:13px;">The HTML copy is interactive — tap any photo to enlarge. Download it from this email to view, as most email clients won't preview HTML attachments for security reasons.</p>` : ''}
+      ${linkBlock}
       <p>This report was generated automatically by the ASH Inspection App.</p>
       <br />
       <p>ASH Chartered Surveyors</p>
     `,
-    attachments: [
-      // DOCX — canonical editable copy. Always included.
-      {
-        filename: `${filename}.docx`,
-        content:  docxB64,
-      },
-      // HTML — self-contained, click-to-enlarge photos, opens in any browser.
-      // Suffix "_INTERACTIVE" so it stands out from the docx in the attachment
-      // list and the recipient is more likely to download it.
-      ...(htmlB64 ? [{
-        filename: `${filename}_INTERACTIVE.html`,
-        content:  htmlB64,
-      }] : []),
-    ],
+    attachments,
   })
 
   if (error) {
@@ -79,5 +94,5 @@ export async function sendReportEmail(params: ReportEmailParams): Promise<void> 
     throw new Error(`Email send failed: ${JSON.stringify(error)}`)
   }
 
-  console.log(`[EMAIL] Report sent successfully to ${to}${droppedHtml ? ' (HTML dropped — over size cap)' : ''}`)
+  console.log(`[EMAIL] Report sent successfully to ${to} — ${attachments.length} attachment(s), ${linkLines.length} download link(s)`)
 }
