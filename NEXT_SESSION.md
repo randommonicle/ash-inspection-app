@@ -55,6 +55,16 @@ Still to do — a **soft in-app photo counter** so PMs are aware when they're ta
 
 App-side change, so it ships with the next APK release — bundle it with the camera-loop / Feedback-rename release if those haven't gone out yet.
 
+### 0e. On-site backup infrastructure (built, DORMANT — not scheduled)
+
+Scripts + runbook are in the repo as of 2026-05-14 but **nothing runs them automatically**:
+- `server/scripts/backup-database.mjs` — `pg_dump` wrapper → timestamped SQL dumps
+- `server/scripts/backup-storage.mjs` — incremental mirror of the `inspection-files` Storage bucket
+- `docs/on-site-backup.md` — full runbook (prerequisites, scheduling, restore, caveats)
+- `npm run backup-db` / `npm run backup-storage` aliases in `server/package.json`
+
+To **activate**: someone at ASH sets up an on-site machine (Node + PostgreSQL client tools + encrypted backup drive), adds `SUPABASE_DB_URL` + `BACKUP_DIR` to that machine's `server/.env`, and schedules the two commands via Task Scheduler. Full steps in the runbook. Do **not** schedule from Railway — backups run from on-site only. Once active + a restore is tested, the 12-month retention window in `cleanup.ts` can safely be shortened.
+
 ---
 
 ## (Original notes below — most items shipped on 2026-05-13)
