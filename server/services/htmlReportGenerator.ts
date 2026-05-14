@@ -58,6 +58,39 @@ function photoDataUri(photo: ReportPhoto): string | null {
   return `data:image/jpeg;base64,${photo.imageBuffer.toString('base64')}`
 }
 
+// CSS class for a photo's background-image rule. The same photo appears in the
+// section strip, the appendix, AND the lightbox — embedding its base64 inline
+// in each place tripled the file size and blew past Resend's 40 MB email cap.
+// Instead we emit the base64 ONCE in a <style> rule (see renderPhotoStyles) and
+// reference it by class everywhere it's shown.
+function photoClass(photo: ReportPhoto): string | null {
+  return photo.imageBuffer ? `photo-${photo.id}` : null
+}
+
+// Inline aspect-ratio style from the photo's real dimensions so thumbnails and
+// lightbox images aren't distorted. Falls back to 4:3 if dimensions are absent.
+function aspectStyle(photo: ReportPhoto): string {
+  return photo.imageWidth && photo.imageHeight
+    ? `aspect-ratio:${photo.imageWidth}/${photo.imageHeight}`
+    : 'aspect-ratio:4/3'
+}
+
+// Emit each photo's base64 exactly once as a CSS background-image rule. This is
+// the single source of every photo's bytes in the document — strip, appendix
+// and lightbox all reference these classes rather than re-embedding the data.
+function renderPhotoStyles(photos: ReportPhoto[]): string {
+  const seen  = new Set<string>()
+  const rules: string[] = []
+  for (const p of photos) {
+    if (!p.imageBuffer || seen.has(p.id)) continue
+    seen.add(p.id)
+    const uri = photoDataUri(p)
+    if (!uri) continue
+    rules.push(`.photo-${p.id}{background-image:url('${uri}')}`)
+  }
+  return rules.join('\n')
+}
+
 function isSectionApplicable(sectionKey: string, flags: ReportData['propertyFlags']): boolean {
   if (sectionKey === 'car_park' && !flags.has_car_park) return false
   if (sectionKey === 'lifts'    && !flags.has_lift)     return false
@@ -129,12 +162,12 @@ function renderSection(
     ? `
       <div class="photo-strip">
         ${sectionPhotos.map(p => {
-          const uri = photoDataUri(p)
-          if (!uri) return ''
+          const cls = photoClass(p)
+          if (!cls) return ''
           const caption = p.caption ?? p.opus_description?.suggested_caption ?? ''
           return `
             <a class="photo-thumb" href="#photo-${esc(p.id)}">
-              <img src="${uri}" alt="${esc(caption || 'Inspection photo')}" loading="lazy" />
+              <span class="thumb-img ${cls}" style="${aspectStyle(p)}" role="img" aria-label="${esc(caption || 'Inspection photo')}"></span>
               ${caption ? `<span class="photo-caption">${esc(caption)}</span>` : ''}
             </a>
           `
@@ -172,12 +205,12 @@ function renderPhotoAppendix(photos: ReportPhoto[]): string {
     .map(key => {
       const sectionPhotos = grouped.get(key)!
       const tiles = sectionPhotos.map(p => {
-        const uri = photoDataUri(p)
-        if (!uri) return ''
+        const cls = photoClass(p)
+        if (!cls) return ''
         const caption = p.caption ?? p.opus_description?.suggested_caption ?? ''
         return `
           <a class="appendix-tile" href="#photo-${esc(p.id)}">
-            <img src="${uri}" alt="${esc(caption || 'Inspection photo')}" loading="lazy" />
+            <span class="thumb-img ${cls}" style="${aspectStyle(p)}" role="img" aria-label="${esc(caption || 'Inspection photo')}"></span>
             ${caption ? `<span class="appendix-caption">${esc(caption)}</span>` : ''}
           </a>
         `
@@ -206,13 +239,13 @@ function renderLightboxes(photos: ReportPhoto[]): string {
   return photos
     .filter(p => p.imageBuffer)
     .map(p => {
-      const uri = photoDataUri(p)
-      if (!uri) return ''
+      const cls = photoClass(p)
+      if (!cls) return ''
       const caption = p.caption ?? p.opus_description?.suggested_caption ?? ''
       return `
         <div class="lightbox" id="photo-${esc(p.id)}">
           <a class="lightbox-close" href="#" aria-label="Close">&times;</a>
-          <img src="${uri}" alt="${esc(caption || 'Inspection photo')}" />
+          <span class="full-img ${cls}" role="img" aria-label="${esc(caption || 'Inspection photo')}"></span>
           ${caption ? `<p class="lightbox-caption">${esc(caption)}</p>` : ''}
         </div>
       `
@@ -420,10 +453,14 @@ body {
   text-decoration: none;
   color: inherit;
 }
-.photo-thumb img {
-  width: 100%;
-  aspect-ratio: auto;
+/* Shared thumbnail image box — base64 comes from the per-photo .photo-{id}
+   rule emitted once in renderPhotoStyles, never inline per <img>. */
+.thumb-img {
   display: block;
+  width: 100%;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
   border-radius: 4px;
   border: 1px solid ${C.midGrey};
   cursor: zoom-in;
@@ -457,13 +494,6 @@ body {
   gap: 8px;
 }
 .appendix-tile { display: block; text-decoration: none; color: inherit; }
-.appendix-tile img {
-  width: 100%;
-  display: block;
-  border-radius: 4px;
-  border: 1px solid ${C.midGrey};
-  cursor: zoom-in;
-}
 .appendix-caption {
   display: block;
   font-size: 10px;
@@ -485,11 +515,12 @@ body {
   padding: 24px;
 }
 .lightbox:target { display: flex; }
-.lightbox img {
-  max-width: 100%;
-  max-height: calc(100vh - 80px);
-  object-fit: contain;
-  border-radius: 4px;
+.lightbox .full-img {
+  width: 100%;
+  height: calc(100vh - 96px);
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 .lightbox-caption {
   color: #ddd;
@@ -570,7 +601,7 @@ body {
   body { background: #fff; }
   .page { padding: 12mm; max-width: none; }
   .lightbox, .lightbox-close { display: none !important; }
-  .photo-thumb img, .appendix-tile img { cursor: default; }
+  .thumb-img { cursor: default; }
   .report-section { page-break-inside: avoid; }
   .appendix { page-break-before: always; }
   a { color: inherit; text-decoration: none; }
@@ -597,7 +628,9 @@ export function buildReportHtml(data: ReportData): Buffer {
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Inspection Report — ${esc(data.propertyName)} (${esc(data.propertyRef)}) — ${esc(data.inspectionDate)}</title>
-<style>${STYLES}</style>
+<style>${STYLES}
+/* Per-photo background-image rules — each photo's base64 appears exactly once */
+${renderPhotoStyles(data.photos)}</style>
 </head>
 <body>
 <main class="page">
