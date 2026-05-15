@@ -14,6 +14,7 @@ import { SectionPicker } from '../components/SectionPicker'
 import { PhotoViewer } from '../components/PhotoViewer'
 import { transcribeAudio } from '../services/transcription'
 import { classifyNarration } from '../services/classify'
+import { retryPendingTranscriptions as retryPendingTranscriptionsService } from '../services/transcriptionRetry'
 import {
   getInspection, completeInspection,
   createObservation, getObservationsForInspection,
@@ -127,45 +128,43 @@ export function ActiveInspectionScreen() {
   }, [inspectionId, inspection])
 
   const retryPendingTranscriptions = useCallback(async () => {
-    if (!inspectionId) return
-    const queue = await getPendingTranscriptions(inspectionId)
-    if (queue.length === 0) return
-
+    if (!inspectionId || !inspection) return
     setRetrying(true)
     setError('')
-    for (const pt of queue) {
-      try {
-        const { data: base64 } = await Filesystem.readFile({ path: pt.audio_path })
-        const binaryStr = atob(base64 as string)
-        const bytes = new Uint8Array(binaryStr.length)
-        for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i)
-        const blob = new Blob([bytes], { type: 'audio/webm' })
-
-        const transcript = await transcribeAudio(blob)
-        if (transcript) {
-          let result
-          try { result = await classifyNarration(transcript) }
-          catch { result = { section_key: 'additional' as const, confidence: 'low' as const, split_required: false } }
-          await saveObservation(transcript, result.section_key, 'auto')
-        }
-        await deletePendingTranscription(pt.id)
-        await Filesystem.deleteFile({ path: pt.audio_path }).catch(() => {})
-      } catch {
-        // Still offline or transient failure — leave in queue
-      }
+    const { remaining, processed } = await retryPendingTranscriptionsService(inspectionId, inspection.property_id)
+    if (processed > 0) {
+      // Pull fresh observations into local state so the feed shows the newly-
+      // transcribed entries. The retry service writes them directly to SQLite.
+      const fresh = await getObservationsForInspection(inspectionId)
+      setObservations(fresh)
+      // Kick off a sync pass — the retry service has already marked the
+      // inspection unsynced if any observations were created.
+      triggerSync().catch(() => {})
     }
-    const remaining = await getPendingTranscriptions(inspectionId)
-    setPendingCount(remaining.length)
+    setPendingCount(remaining)
     setRetrying(false)
-  }, [inspectionId, saveObservation])
+  }, [inspectionId, inspection, triggerSync])
 
-  // Auto-retry queued recordings when network comes back
+  // Auto-retry queued recordings whenever we have a network connection.
+  // Fires on initial mount when online (the original bug only fired on the
+  // false→true edge, so a queue that survived a fresh app launch never ran).
+  // The session ref re-arms on each offline period so we don't spam retries
+  // while staying continuously online.
+  const retrySessionRef = useRef(false)
   useEffect(() => {
-    if (online && !prevOnlineRef.current) {
-      retryPendingTranscriptions()
+    if (!online) {
+      retrySessionRef.current = false
+      prevOnlineRef.current = online
+      return
     }
+    if (!inspection || retrySessionRef.current) {
+      prevOnlineRef.current = online
+      return
+    }
+    retrySessionRef.current = true
+    retryPendingTranscriptions()
     prevOnlineRef.current = online
-  }, [online, retryPendingTranscriptions])
+  }, [online, inspection, retryPendingTranscriptions])
 
   const handleRecordingComplete = useCallback(async (blob: Blob) => {
     if (!inspectionId || !profile || !inspection) return
@@ -180,9 +179,18 @@ export function ActiveInspectionScreen() {
     const targetId = appendingToId
     setAppendingToId(null)
 
-    // Save audio to disk before transcribing so we can retry later if offline
+    // Write the audio to disk AND register a pending_transcription row before
+    // we attempt transcription. This ordering is load-bearing: if the app is
+    // killed mid-upload (process death on slow 4G, Android low-memory kill),
+    // the audio file would otherwise outlive its bookkeeping and the retry
+    // mechanism would never see it. By creating the row first, every audio
+    // file on disk is guaranteed to have a row pointing at it.
+    //
+    // On successful transcription we tear the row + file down in the finally
+    // block. On failure we leave them in place for the next retry pass.
     let savedAudioPath: string | null = null
-    let keepAudio = false
+    let pendingId: string | null = null
+    let transcriptionSucceeded = false
     try {
       const base64 = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader()
@@ -194,12 +202,27 @@ export function ActiveInspectionScreen() {
       await Filesystem.writeFile({ path: filename, data: base64, directory: Directory.Documents })
       const { uri } = await Filesystem.getUri({ path: filename, directory: Directory.Documents })
       savedAudioPath = uri
+      const row = await createPendingTranscription({ inspection_id: inspectionId, audio_path: savedAudioPath })
+      pendingId = row.id
+      // The pending count is only incremented in the catch block below — we
+      // don't want the "queued" banner to flash during the normal in-flight
+      // window of a successful recording.
     } catch {
-      // Non-fatal — proceed without offline retry capability
+      // If the file was written but the row insert failed (SQLite under
+      // stress), clear up the orphan file so we don't leave a stranded blob
+      // with no bookkeeping pointing at it. Then proceed without offline
+      // retry capability for this recording.
+      if (savedAudioPath) {
+        await Filesystem.deleteFile({ path: savedAudioPath }).catch(() => {})
+        savedAudioPath = null
+      }
     }
 
     try {
       const transcript = await transcribeAudio(blob)
+      // Network call returned without throwing — the audio file has served its
+      // purpose, regardless of whether downstream classification/save succeeds.
+      transcriptionSucceeded = true
       if (!transcript) {
         setError('No speech detected — try again.')
         return
@@ -259,18 +282,30 @@ export function ActiveInspectionScreen() {
 
       await saveObservation(transcript, result.section_key, 'auto')
     } catch (err: unknown) {
-      if (savedAudioPath) {
-        await createPendingTranscription({ inspection_id: inspectionId, audio_path: savedAudioPath })
+      if (!transcriptionSucceeded && pendingId) {
+        // Network failed before transcription returned. The row + file are
+        // intact — surface the queued state so the PM knows the audio is
+        // safe and the retry mechanism will pick it up.
         setPendingCount(prev => prev + 1)
-        keepAudio = true
         setError('No connection — audio saved. Will transcribe when back online.')
       } else {
-        setError(err instanceof Error ? err.message : 'Transcription failed')
+        // Either transcription succeeded but classify/save downstream failed
+        // (the audio is no longer useful), or we never managed to write the
+        // file at all. Either way, the row + file cleanup in finally handles
+        // it correctly; just show a generic error.
+        setError(err instanceof Error ? err.message : 'Recording failed')
       }
     } finally {
-      // Remove this recording's placeholder from the processing queue
+      // Remove this recording's placeholder from the processing queue.
       setProcessingItems(prev => prev.filter(k => k !== itemKey))
-      if (!keepAudio && savedAudioPath) {
+      // Transcription succeeded → drop the pending row + audio file so the
+      // retry mechanism doesn't reprocess them. On failure we leave both for
+      // the next retry pass. pendingCount stays untouched here — it's only
+      // mutated on the failure path where the row is actually kept.
+      if (transcriptionSucceeded && pendingId) {
+        await deletePendingTranscription(pendingId).catch(() => {})
+      }
+      if (transcriptionSucceeded && savedAudioPath) {
         await Filesystem.deleteFile({ path: savedAudioPath }).catch(() => {})
       }
     }
@@ -351,6 +386,13 @@ export function ActiveInspectionScreen() {
 
   const handleComplete = useCallback(async () => {
     if (!inspectionId) return
+    if (pendingCount > 0) {
+      // Block completion while audio is still queued — otherwise the inspection
+      // is marked complete with missing observations and the report goes out
+      // without them. The retry banner already tells the PM what's queued.
+      setError(`${pendingCount} audio recording${pendingCount === 1 ? ' is' : 's are'} still waiting to transcribe. Connect to network and wait for them to clear before completing.`)
+      return
+    }
     setCompleting(true)
     try {
       await completeInspection(inspectionId)
@@ -367,7 +409,7 @@ export function ActiveInspectionScreen() {
       setError('Failed to complete inspection')
       setCompleting(false)
     }
-  }, [inspectionId, navigate, triggerSync, property, inspection])
+  }, [inspectionId, navigate, triggerSync, property, inspection, pendingCount])
 
   const formatTime = (s: number) => {
     const m   = Math.floor(s / 60).toString().padStart(2, '0')
@@ -557,7 +599,7 @@ export function ActiveInspectionScreen() {
 
         <button
           onClick={handleComplete}
-          disabled={completing || processingItems.length > 0 || (observations.length === 0 && photos.length === 0)}
+          disabled={completing || processingItems.length > 0 || pendingCount > 0 || (observations.length === 0 && photos.length === 0)}
           className="w-full py-4 rounded-xl border-2 border-ash-navy text-ash-navy font-bold text-base active:scale-[0.98] transition disabled:opacity-40"
         >
           {completing ? 'Completing…' : '✓  Complete Inspection'}

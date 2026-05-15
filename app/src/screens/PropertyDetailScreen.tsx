@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { useSync } from '../hooks/useSync'
 import { getInspectionsForProperty, createInspection, deleteInspection, markReportSent, getObservationsForInspection, getPhotosForInspection, updateObservationSection, markInspectionUnsynced } from '../db/database'
 import { generateReport, ReportError } from '../services/report'
+import { retryPendingTranscriptions } from '../services/transcriptionRetry'
 import { freeLocalPhotos, formatFreedBytes } from '../services/cleanup'
 import { PreReportChecklist } from '../components/PreReportChecklist'
 import type { Property, LocalInspection, LocalObservation, LocalPhoto, SectionKey } from '../types'
@@ -37,6 +38,11 @@ export function PropertyDetailScreen() {
   const [error, setError]                   = useState('')
   const [checklist, setChecklist]           = useState<{ inspectionId: string; observations: LocalObservation[]; photos: LocalPhoto[] } | null>(null)
   const progressIntervalRef                 = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Ref mirror of `inspections` so handleGenerateReport (which has [] deps to
+  // stay stable across renders) can read the latest value without a stale
+  // closure pinning it to the initial empty array.
+  const inspectionsRef                      = useRef<LocalInspection[]>([])
+  const triggerSyncRef                      = useRef(triggerSync)
 
   // Known pipeline stages: [ms from start, target %, label]
   // Timings are conservative — the bar waits at 95% until the API responds.
@@ -49,6 +55,9 @@ export function PropertyDetailScreen() {
     [55000, 91, 'Uploading report…'],
     [65000, 95, 'Sending to your email…'],
   ]
+
+  useEffect(() => { inspectionsRef.current = inspections }, [inspections])
+  useEffect(() => { triggerSyncRef.current = triggerSync }, [triggerSync])
 
   // Load property + inspections on mount
   useEffect(() => {
@@ -115,6 +124,35 @@ export function PropertyDetailScreen() {
   const handleGenerateReport = useCallback(async (inspectionId: string) => {
     setGeneratingId(inspectionId)
     setReportResult(prev => { const n = { ...prev }; delete n[inspectionId]; return n })
+    setReportErrorStage(prev => { const n = { ...prev }; delete n[inspectionId]; return n })
+
+    // Drain any pending transcriptions for this inspection before generating.
+    // If the PM completed the inspection while offline and came back online on
+    // this screen, the audio queue may still hold recordings that never reached
+    // Deepgram. Generating now would email a report missing those observations.
+    const inspection = inspectionsRef.current.find(i => i.id === inspectionId)
+    if (inspection) {
+      try {
+        const { remaining, processed } = await retryPendingTranscriptions(inspectionId, inspection.property_id)
+        if (remaining > 0) {
+          setReportResult(prev => ({ ...prev, [inspectionId]: 'error' }))
+          setReportErrorStage(prev => ({
+            ...prev,
+            [inspectionId]: `${remaining} audio recording${remaining === 1 ? ' is' : 's are'} waiting to transcribe — connect to network and try again`,
+          }))
+          setGeneratingId(null)
+          return
+        }
+        if (processed > 0) {
+          // Newly-transcribed observations are in local SQLite but not yet in
+          // Supabase. The retry service marked the inspection unsynced; push
+          // the sync now and wait for it before the server-side report runs.
+          await triggerSyncRef.current().catch(() => {})
+        }
+      } catch (retryErr) {
+        console.warn('[PROPERTY DETAIL] Pending transcription retry failed:', retryErr instanceof Error ? retryErr.message : retryErr)
+      }
+    }
 
     // Start fake stage-based progress
     const startMs = Date.now()
